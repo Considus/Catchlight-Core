@@ -46,7 +46,7 @@ Add it as a Swift package and pin an exact version:
 
 A new version can change what gets written to disk, so an app should take one on purpose, with its own tests run against it, and never pick one up by accident.
 
-## The rules
+## The non-negotiables
 
 The domain-separation strings and derivation parameters in `Sources/CatchlightCore/Crypto/` are fixed. Every Catchlight app, on every device, has to agree on them, so changing one doesn't tidy anything up, it locks people out of their own Takes.
 
