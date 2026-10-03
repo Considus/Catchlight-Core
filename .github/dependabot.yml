@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Core has no third-party package dependencies (Package.resolved is gitignored),
+  # so the only pinned versions are the workflow actions' commit SHAs.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
