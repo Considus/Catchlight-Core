@@ -32,6 +32,8 @@ git config core.hooksPath hooks
 
 🚨 **The on-disk format is shared with every app and every device.** A change to what is written (a Take field, the manifest, an envelope) needs a reader for the old shape, and the apps have to agree it before it ships. Additive optional fields are the safe shape; see `ManifestEntry.kind` (D-315) for the precedent.
 
+`Sources/CatchlightCoreTestSupport/` is the second library product, for test targets only: the `TakeStoreContractTests` base class every app subclasses with its own store, and the shared fixtures (`TestFixtures.richTake`, `Take.primaryText`). Its tests also run here against `InMemoryTakeStore`. A change to the contract reaches each app's store through its pin bump, so treat it like an API change. The XCTest file sits inside `#if canImport(XCTest)` so `swift build` still works with only the Command Line Tools.
+
 Core has no platform dependencies: Keychain, storage, file protection and the cloud folder are injected through protocols and implemented in each app. Keep it that way. No network code, ever (there is none today).
 
 No third-party dependencies without agreeing it first.

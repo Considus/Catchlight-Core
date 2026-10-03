@@ -28,6 +28,9 @@ let package = Package(
     ],
     products: [
         .library(name: "CatchlightCore", targets: ["CatchlightCore"]),
+        // For test targets only: the shared TakeStore contract and fixtures, so
+        // each app runs the contract against its own store instead of a copy.
+        .library(name: "CatchlightCoreTestSupport", targets: ["CatchlightCoreTestSupport"]),
         .executable(name: "coreverify", targets: ["coreverify"])
     ],
     targets: [
@@ -35,11 +38,16 @@ let package = Package(
             name: "CatchlightCore",
             path: "Sources/CatchlightCore"
         ),
+        .target(
+            name: "CatchlightCoreTestSupport",
+            dependencies: ["CatchlightCore"],
+            path: "Sources/CatchlightCoreTestSupport"
+        ),
         // XCTest-based suite — the canonical Phase 5 §12 tests. Runs under a full
         // Xcode toolchain / CI (`swift test` or the Xcode test action).
         .testTarget(
             name: "CatchlightCoreTests",
-            dependencies: ["CatchlightCore"],
+            dependencies: ["CatchlightCore", "CatchlightCoreTestSupport"],
             path: "Tests/CatchlightCoreTests"
         ),
         // A dependency-free executable that re-runs the same scenarios with a tiny

@@ -1,12 +1,18 @@
 //
 //  TakeStoreContractTests.swift
-//  CatchlightCoreTests — 2026-06-10 remediation, shared store contract suite
+//  CatchlightCoreTestSupport — 2026-06-10 remediation, shared store contract suite
 //
 //  ONE set of assertions for the full `TakeStore` protocol contract, run against
 //  EVERY implementation. The base class drives `InMemoryTakeStore` (always runs,
 //  including under `swift test` on macOS); `EncryptedTakeStoreContractTests`
 //  (see EncryptedTakeStoreTests.swift, iOS-gated) subclasses it to run the SAME
 //  tests against the production SQLite store in a temp directory.
+//
+//  It lives in a library product rather than the test target so every app
+//  runs the same contract against its own store by subclassing it, instead of
+//  keeping a copy that drifts from the pinned tag. A consuming test target
+//  links `CatchlightCoreTestSupport` and overrides `makeStore()`; the base
+//  class's own tests also run there against `InMemoryTakeStore`.
 //
 //  This closes the long-standing gap where `takesModified(since:)`, `search`,
 //  `lastSyncDate`, and the tombstone API had NO coverage on the production
@@ -18,23 +24,23 @@
 //  surface, so they cannot accidentally depend on implementation details.
 //
 
+#if canImport(XCTest)
 import XCTest
-import CryptoKit
-@testable import CatchlightCore
+import CatchlightCore
 
-class TakeStoreContractTests: XCTestCase {
+open class TakeStoreContractTests: XCTestCase {
 
     /// Factory the contract runs against. Subclasses override.
-    func makeStore() throws -> TakeStore { InMemoryTakeStore() }
+    open func makeStore() throws -> TakeStore { InMemoryTakeStore() }
 
-    private(set) var store: TakeStore!
+    public private(set) var store: TakeStore!
 
-    override func setUpWithError() throws {
+    open override func setUpWithError() throws {
         try super.setUpWithError()
         store = try makeStore()
     }
 
-    override func tearDownWithError() throws {
+    open override func tearDownWithError() throws {
         store = nil
         try super.tearDownWithError()
     }
@@ -364,3 +370,4 @@ class TakeStoreContractTests: XCTestCase {
     }
 
 }
+#endif

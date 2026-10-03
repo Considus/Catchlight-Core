@@ -18,6 +18,7 @@
 //
 
 import XCTest
+import CatchlightCoreTestSupport
 @testable import CatchlightCore
 
 final class TakeStoreBehaviourTests: XCTestCase {
