@@ -41,10 +41,12 @@ swift test --scratch-path "$BUILD_DIR/spm"
 Add it as a Swift package and pin an exact version:
 
 ```swift
-.package(url: "https://github.com/Considus/Catchlight-Core", exact: "1.0.0")
+.package(url: "https://github.com/Considus/Catchlight-Core", exact: "1.0.1")
 ```
 
 A new version can change what gets written to disk, so an app should take one on purpose, with its own tests run against it, and never pick one up by accident.
+
+There's a second product, `CatchlightCoreTestSupport`, for an app's test target and never the app itself. It carries the contract every Take store has to meet, as a test class you subclass with your own store, so the iPhone's database and the Mac's are held to the same tests rather than to two copies that drift apart.
 
 ## The non-negotiables
 

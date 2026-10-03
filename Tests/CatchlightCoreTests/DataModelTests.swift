@@ -6,6 +6,7 @@
 //
 
 import XCTest
+import CatchlightCoreTestSupport
 @testable import CatchlightCore
 
 final class DataModelTests: XCTestCase {

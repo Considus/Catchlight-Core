@@ -19,6 +19,7 @@
 
 import XCTest
 import CryptoKit
+import CatchlightCoreTestSupport
 @testable import CatchlightCore
 
 final class SyncSelfHealAndVersionGuardTests: XCTestCase {
