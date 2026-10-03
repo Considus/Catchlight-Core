@@ -1,0 +1,24 @@
+{
+  "labels": [
+    "greptile"
+  ],
+  "autoReview": [
+    "open"
+  ],
+  "triggerOnDrafts": false,
+  "strictness": 2,
+  "commentTypes": [
+    "logic",
+    "syntax"
+  ],
+  "fileChangeLimit": 60,
+  "excludeAuthors": [
+    "dependabot[bot]",
+    "renovate[bot]"
+  ],
+  "ignorePatterns": ".build/**\n.swiftpm/**\nDerivedData/**",
+  "statusCheck": true,
+  "fixWithAI": true,
+  "includeConfidenceScore": true,
+  "instructions": "CatchlightCore, the shared Swift package every Catchlight app builds against: the Take model, the platform-agnostic JSON file format, the crypto chain (HKDF master key and key hierarchy, AES-256-GCM per Take, HMAC-SHA-256 manifest, X25519 handshake, BIP-39) and the sync engine. It holds the owner's real daily notes on every device, and every app pins an exact version, so a defect here reaches every platform. The domain-separation strings and derivation parameters in Sources/CatchlightCore/Crypto/ are frozen contract bytes: treat any change to them, or to what is written to disk without a reader for the old shape, as a breaking bug. Core must make no network calls and take no platform dependency (Keychain, storage and the cloud folder are injected through protocols). Reviews cost a credit from a 50-a-month budget shared by nine repos, so spend the comments on correctness, security and broken contracts rather than taste. AGENTS.md is the source of truth for the ground rules."
+}
