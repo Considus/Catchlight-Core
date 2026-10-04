@@ -14,6 +14,8 @@ I'll acknowledge it within **3 business days** and keep you posted while it's be
 
 Everything in this package, which means the cryptographic design, key management, and the file-based sync format. Local storage protection and the Keychain live in each app, so they're in scope too, reported the same way, whichever app it is.
 
+Report a problem with the catchlight.app website to the same address. The policy that covers the site, alongside every Catchlight app and package, is at [catchlight.app/security](https://catchlight.app/security/).
+
 Generally out of scope, anything that needs a jailbroken or otherwise compromised device, or physical access to a device that is already unlocked. Social engineering and denial of service are out too, along with findings in third-party platforms like Apple or whichever cloud provider the user picked, because those aren't mine to fix.
 
 ## Safe harbour
