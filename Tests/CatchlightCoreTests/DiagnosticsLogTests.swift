@@ -185,6 +185,17 @@ final class DiagnosticsLogTests: XCTestCase {
         XCTAssertEqual(log.entries().map(\.message), ["Backgrounded (clean exit)"])
     }
 
+    /// A package under the app writes coded lines through the public entry point.
+    func testRecordWithCode_prefixesOnlyWhenPlatformIsSet() {
+        let log = DiagnosticsLog(fileURL: fileURL)
+        log.record(.lifecycle, code: 920, "Sync watermark write failed (prepare).")
+        log.platformCode = "CCMOS"
+        log.record(.lifecycle, code: 921, "Sync watermark write failed (step).")
+        XCTAssertEqual(log.entries().map(\.message),
+                       ["Sync watermark write failed (prepare).",
+                        "[CCMOS-921] Sync watermark write failed (step)."])
+    }
+
     /// Core owns 950–999 of the shared numbering; numbers are permanent once released.
     func testCoreCodes_stayInCoreRange_andNeverChange() {
         XCTAssertTrue(CoreNoticeCode.allCases.allSatisfy { (950...999).contains($0.rawValue) })

@@ -140,11 +140,19 @@ public final class DiagnosticsLog: @unchecked Sendable {
         writeLocked(Self.trim(all))
     }
 
+    /// A line with a reference code from the shared numbering, written as
+    /// `[<platformCode>-<code>] <message>`, or uncoded when no platform code is set. For
+    /// packages that sit under an app (Catchlight-AppleStorage) and so can't build the
+    /// prefix themselves. An app's own notices build their prefix in the app.
+    public func record(_ category: DiagnosticCategory, code: Int, _ message: String) {
+        let line = platformCode.map { "[\($0)-\(code)] \(message)" } ?? message
+        record(category, line)
+    }
+
     /// A line Core writes itself: developer-only (`.lifecycle`), English, with its reference
     /// code when the app has set `platformCode`.
     func record(_ code: CoreNoticeCode, _ message: String) {
-        let line = platformCode.map { "[\($0)-\(code.rawValue)] \(message)" } ?? message
-        record(.lifecycle, line)
+        record(.lifecycle, code: code.rawValue, message)
     }
 
     /// Enforce every bound, oldest-first: per-class COUNT budgets, then AGE, then the byte ceiling.
