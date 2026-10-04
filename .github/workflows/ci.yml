@@ -82,20 +82,22 @@ jobs:
         env:
           DESTINATION: ${{ matrix.destination }}
         run: |
-          OS=$(sed -n 's/.*OS=\([^,]*\).*/\1/p' <<< "$DESTINATION")
+          WANT=$(sed -n 's/.*OS=\([^,]*\).*/\1/p' <<< "$DESTINATION")
           for _ in $(seq 1 36); do
-            LIST=$(xcrun simctl list devices available || true)
-            if [ "$OS" = latest ]; then
-              grep -q '^    iPhone 16 (' <<< "$LIST" && FOUND=1
-            else
-              awk -v h="-- iOS $OS --" '/^-- /{s=($0==h)} s' <<< "$LIST" | grep -q '^    iPhone 16 (' && FOUND=1
+            OS=$WANT
+            # "latest" is the newest iOS runtime installed, so wait for ITS iPhone 16:
+            # an older runtime's iPhone 16 appearing first would end the wait too soon.
+            if [ "$WANT" = latest ]; then
+              OS=$(xcrun simctl list runtimes available 2>&1 | sed -n 's/^iOS \([0-9.]*\) .*/\1/p' | sort -V | tail -1)
             fi
+            LIST=$(xcrun simctl list devices available || true)
+            awk -v h="-- iOS $OS --" '/^-- /{s=($0==h)} s' <<< "$LIST" | grep -q '^    iPhone 16 (' && FOUND=1
             [ -n "${FOUND:-}" ] && break
             sleep 5
           done
           grep -E '^-- iOS|^    iPhone 16 \(' <<< "$LIST" || true
           if [ -z "${FOUND:-}" ]; then
-            echo "::error::No iPhone 16 simulator for OS=$OS after 3 minutes."
+            echo "::error::No iPhone 16 simulator for OS=$WANT (runtime ${OS:-none}) after 3 minutes."
             exit 1
           fi
 
