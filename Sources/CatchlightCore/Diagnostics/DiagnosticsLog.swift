@@ -116,6 +116,15 @@ public final class DiagnosticsLog: @unchecked Sendable {
 
     private let fileURL: URL
     private let lock = NSLock()
+    private var platformCodeStorage: String?
+
+    /// The platform part of a reference code (`CCIOS`, `CCMOS`), set by the app at launch
+    /// before anything is recorded. Core's own lines are prefixed `[<platformCode>-<number>]`
+    /// when it is set, and written uncoded when it is not.
+    public var platformCode: String? {
+        get { lock.lock(); defer { lock.unlock() }; return platformCodeStorage }
+        set { lock.lock(); defer { lock.unlock() }; platformCodeStorage = newValue }
+    }
 
     public init(fileURL: URL) { self.fileURL = fileURL }
 
@@ -129,6 +138,13 @@ public final class DiagnosticsLog: @unchecked Sendable {
         var all = loadLocked()
         all.append(DiagnosticEntry(category: category, message: message))
         writeLocked(Self.trim(all))
+    }
+
+    /// A line Core writes itself: developer-only (`.lifecycle`), English, with its reference
+    /// code when the app has set `platformCode`.
+    func record(_ code: CoreNoticeCode, _ message: String) {
+        let line = platformCode.map { "[\($0)-\(code.rawValue)] \(message)" } ?? message
+        record(.lifecycle, line)
     }
 
     /// Enforce every bound, oldest-first: per-class COUNT budgets, then AGE, then the byte ceiling.
@@ -193,17 +209,17 @@ public final class DiagnosticsLog: @unchecked Sendable {
             // Everything technical, nothing personal (owner: capture as much as we can, right up
             // to the line where user info would be gleaned). Build/OS/device only — the preceding
             // breadcrumbs supply the "what was it doing", and they're already in the file.
-            record(.lifecycle, "Previous run ended unexpectedly (no clean shutdown) — \(build), iOS \(systemVersion), \(deviceModel)")
+            record(.previousRunEndedUnexpectedly, "Previous run ended unexpectedly (no clean shutdown) — \(build), iOS \(systemVersion), \(deviceModel)")
         }
         defaults.set(true, forKey: Self.runningFlagKey)
-        record(.lifecycle, "Launch — \(build), iOS \(systemVersion), \(deviceModel)")
+        record(.launch, "Launch — \(build), iOS \(systemVersion), \(deviceModel)")
         return crashed
     }
 
     /// Call on an orderly exit (background / terminate). Clears the flag, so the next launch knows
     /// this run ended properly.
     public func markCleanExit(defaults: UserDefaults = .standard) {
-        record(.lifecycle, "Backgrounded (clean exit)")
+        record(.cleanExit, "Backgrounded (clean exit)")
         defaults.set(false, forKey: Self.runningFlagKey)
     }
 

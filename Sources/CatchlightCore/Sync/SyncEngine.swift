@@ -689,10 +689,10 @@ public final class SyncEngine {
             report = try pullInbound(isCancelled: isCancelled)
         } catch {
             let ns = error as NSError
-            DiagnosticsLog.shared.record(.lifecycle, "Sync: pull failed (\(ns.domain) \(ns.code))")
+            DiagnosticsLog.shared.record(.syncPullFailed, "Sync: pull failed (\(ns.domain) \(ns.code))")
             throw error
         }
-        DiagnosticsLog.shared.record(.lifecycle, "Sync: pull ok")
+        DiagnosticsLog.shared.record(.syncPullOK, "Sync: pull ok")
         do {
             let out = try pushOutbound(isCancelled: isCancelled,
                                        repairing: Set(report.repairCandidates))
@@ -707,15 +707,15 @@ public final class SyncEngine {
             report.forkedFromScripts += out.forkedFromScripts
             // Content-free, like the lines above: no count, no UUID.
             if !out.repaired.isEmpty {
-                DiagnosticsLog.shared.record(.lifecycle, "Sync: repaired a cloud copy that failed verification")
+                DiagnosticsLog.shared.record(.syncRepairedCloudCopy, "Sync: repaired a cloud copy that failed verification")
             }
-            DiagnosticsLog.shared.record(.lifecycle, "Sync: push ok")
+            DiagnosticsLog.shared.record(.syncPushOK, "Sync: push ok")
         } catch is SyncLockError {
             report.pushDeferred = true
-            DiagnosticsLog.shared.record(.lifecycle, "Sync: push deferred (lock held)")
+            DiagnosticsLog.shared.record(.syncPushDeferred, "Sync: push deferred (lock held)")
         } catch {
             let ns = error as NSError
-            DiagnosticsLog.shared.record(.lifecycle, "Sync: push failed (\(ns.domain) \(ns.code))")
+            DiagnosticsLog.shared.record(.syncPushFailed, "Sync: push failed (\(ns.domain) \(ns.code))")
             throw error
         }
         return report
