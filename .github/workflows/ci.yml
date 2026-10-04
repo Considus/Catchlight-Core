@@ -69,6 +69,36 @@ jobs:
           echo "DEVELOPER_DIR=$XCODE/Contents/Developer" >> "$GITHUB_ENV"
           echo "Selected $XCODE"
 
+      # xcodebuild waits about 60 seconds for the destination and then gives up.
+      # On a fresh runner CoreSimulator can take longer than that to publish its
+      # devices, and xcodebuild then lists no simulators at all and exits 70
+      # ("Unable to find a device matching the provided destination specifier").
+      # It hit both legs at random here (PR #3 and #4, 2026-10-03), and the same step
+      # fixed it in Catchlight-AppleStorage (its PR #3). Asking
+      # simctl first starts the service, and the loop waits until the leg's
+      # iPhone 16 is listed. The matrix strings are required status checks on
+      # main, so they stay as they are.
+      - name: Wait for the simulator
+        env:
+          DESTINATION: ${{ matrix.destination }}
+        run: |
+          OS=$(sed -n 's/.*OS=\([^,]*\).*/\1/p' <<< "$DESTINATION")
+          for _ in $(seq 1 36); do
+            LIST=$(xcrun simctl list devices available || true)
+            if [ "$OS" = latest ]; then
+              grep -q '^    iPhone 16 (' <<< "$LIST" && FOUND=1
+            else
+              awk -v h="-- iOS $OS --" '/^-- /{s=($0==h)} s' <<< "$LIST" | grep -q '^    iPhone 16 (' && FOUND=1
+            fi
+            [ -n "${FOUND:-}" ] && break
+            sleep 5
+          done
+          grep -E '^-- iOS|^    iPhone 16 \(' <<< "$LIST" || true
+          if [ -z "${FOUND:-}" ]; then
+            echo "::error::No iPhone 16 simulator for OS=$OS after 3 minutes."
+            exit 1
+          fi
+
       - name: xcodebuild test
         run: |
           xcodebuild test \
