@@ -158,6 +158,55 @@ final class DiagnosticsLogTests: XCTestCase {
                        DiagnosticsLog.maxAge, "a longer window is capped at ours")
     }
 
+    // MARK: - Reference codes
+
+    /// With the app's platform code set, Core's own lines carry `[<platform>-<number>]`.
+    func testCoreLines_carryTheReferenceCode_whenPlatformIsSet() {
+        let suite = "diag-codes-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let log = DiagnosticsLog(fileURL: fileURL)
+        log.platformCode = "CCIOS"
+        log.recordLaunch(defaults: defaults, build: "1.0", systemVersion: "26.3.1", deviceModel: "iPhone17,1")
+        log.markCleanExit(defaults: defaults)
+        XCTAssertEqual(log.entries().map(\.message),
+                       ["[CCIOS-952] Launch — 1.0, iOS 26.3.1, iPhone17,1",
+                        "[CCIOS-953] Backgrounded (clean exit)"])
+        XCTAssertEqual(log.entries().map(\.category), [.lifecycle, .lifecycle])
+    }
+
+    /// With no platform code, lines are written as they always were.
+    func testCoreLines_uncoded_whenNoPlatformIsSet() {
+        let suite = "diag-uncoded-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let log = DiagnosticsLog(fileURL: fileURL)
+        log.markCleanExit(defaults: defaults)
+        XCTAssertEqual(log.entries().map(\.message), ["Backgrounded (clean exit)"])
+    }
+
+    /// A package under the app writes coded lines through the public entry point.
+    func testRecordWithCode_prefixesOnlyWhenPlatformIsSet() {
+        let log = DiagnosticsLog(fileURL: fileURL)
+        log.record(.lifecycle, code: 920, "Sync watermark write failed (prepare).")
+        log.platformCode = "CCMOS"
+        log.record(.lifecycle, code: 921, "Sync watermark write failed (step).")
+        XCTAssertEqual(log.entries().map(\.message),
+                       ["Sync watermark write failed (prepare).",
+                        "[CCMOS-921] Sync watermark write failed (step)."])
+    }
+
+    /// Core owns 950–999 of the shared numbering; numbers are permanent once released.
+    func testCoreCodes_stayInCoreRange_andNeverChange() {
+        XCTAssertTrue(CoreNoticeCode.allCases.allSatisfy { (950...999).contains($0.rawValue) })
+        let pinned: [String: Int] = [
+            "previousRunEndedUnexpectedly": 951, "launch": 952, "cleanExit": 953,
+            "syncPullFailed": 954, "syncPullOK": 955, "syncRepairedCloudCopy": 956,
+            "syncPushOK": 957, "syncPushDeferred": 958, "syncPushFailed": 959,
+        ]
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: CoreNoticeCode.allCases.map { ("\($0)", $0.rawValue) }), pinned)
+    }
+
     // MARK: - Unexpected-termination detection
 
     func testUnexpectedTerminationIsDetectedAndIsNotUserFacing() {
