@@ -25,6 +25,9 @@ import CryptoKit
 #else
 import Crypto
 #endif
+#if os(Windows)
+import WinSDK
+#endif
 
 /// Written by the NEW device to `catchlight-device-request-{uuid}.json`.
 public struct HandshakeRequest: Codable, Equatable, Sendable {
@@ -205,9 +208,9 @@ public enum DeviceHandshake {
 }
 
 private extension Data {
-    /// Overwrite bytes in place with zeros. Uses `memset_s` on Apple platforms and
-    /// `explicit_bzero` on Linux (both guaranteed not to be
-    /// optimised away) on the actual backing buffer — the previous
+    /// Overwrite bytes in place with zeros. Uses `memset_s` on Apple platforms,
+    /// `explicit_bzero` on Linux and `RtlSecureZeroMemory` on Windows (all guaranteed
+    /// not to be optimised away) on the actual backing buffer — the previous
     /// `replaceSubrange` implementation could trigger a copy-on-write
     /// reallocation, zeroing a fresh copy while the original key bytes lived on.
     mutating func resetBytes(in range: Range<Int>) {
@@ -218,6 +221,9 @@ private extension Data {
             #elseif canImport(Glibc)
             // glibc has no memset_s; explicit_bzero carries the same guarantee.
             explicit_bzero(base + range.lowerBound, range.count)
+            #elseif os(Windows)
+            // SecureZeroMemory is a macro over this, so Swift sees only this name.
+            RtlSecureZeroMemory(base + range.lowerBound, SIZE_T(range.count))
             #else
             #error("No zeroing primitive that cannot be optimised away on this platform")
             #endif
