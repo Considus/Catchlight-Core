@@ -123,7 +123,17 @@ public enum CaptureRouting {
 
     // MARK: - Shared-item queue (Share Extension, 2026-08-11)
 
-    private static let sharedQueueKey = "capture.sharedQueue"
+    /// Where builds before the per-key queue kept every share, as one string array. Still
+    /// read and drained so shares queued by an older build land; nothing writes it any more.
+    private static let legacySharedQueueKey = "capture.sharedQueue"
+
+    /// Each share lives under its OWN key, `capture.shared.<ms since 1970>.<uuid>`. The share
+    /// extension and the app are different processes writing the same App Group defaults, and
+    /// a single array read, changed and written back by both lost whichever write came first
+    /// (a share made while the app was draining vanished unread). Writing one key per share
+    /// leaves nothing to read back: an enqueue only adds its key, and a drain removes only
+    /// the keys it read. The zero-padded time prefix makes key order queue order.
+    private static let sharedKeyPrefix = "capture.shared."
 
     /// How many shared items the queue holds before it starts dropping the OLDEST.
     ///
@@ -137,9 +147,8 @@ public enum CaptureRouting {
     /// (owner 2026-08-11 — the sheet gained Obie / Important / Task toggles, so the shaping has
     /// to survive the hand-off, not just the text).
     ///
-    /// Encoded as JSON into the same string array the queue already used. Decoding falls back to
-    /// treating a bare string as plain text, so an item queued by an older build still lands
-    /// rather than being dropped as unparseable.
+    /// Encoded as JSON. Decoding falls back to treating a bare string as plain text, so an
+    /// item queued by an older build still lands rather than being dropped as unparseable.
     public struct SharedItem: Codable, Equatable, Sendable {
         public var text: String
         /// Capture it as the Obie. Set by the Siri "New Obie" capture, NOT by the share sheet —
@@ -154,6 +163,13 @@ public enum CaptureRouting {
         }
     }
 
+    /// A queued item together with where it is stored, so a drain can remove exactly the
+    /// items it read (`clearShared(_:)`). `storageKey` is nil for an item in the legacy array.
+    public struct SharedEntry: Equatable, Sendable {
+        public let item: SharedItem
+        let storageKey: String?
+    }
+
     /// Append a shared item for the app to turn into a Take on next open.
     ///
     /// A QUEUE, deliberately, where the widget hand-off above is a single slot. A launcher
@@ -166,15 +182,24 @@ public enum CaptureRouting {
     /// master key is `.userPresence`-gated and only materialises in the foreground app, which
     /// is why the extension queues rather than saves.
     public static func enqueueShared(_ item: SharedItem,
-                                     defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
+                                     defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite),
+                                     now: Date = Date()) {
         var item = item
         item.text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let defaults, !item.text.isEmpty,
               let encoded = try? PlatformJSON.encode(item) else { return }
-        var queue = defaults.stringArray(forKey: sharedQueueKey) ?? []
-        queue.append(String(decoding: encoded, as: UTF8.self))
-        if queue.count > sharedQueueCap { queue.removeFirst(queue.count - sharedQueueCap) }
-        defaults.set(queue, forKey: sharedQueueKey)
+        let millis = max(0, Int64((now.timeIntervalSince1970 * 1000).rounded(.down)))
+        let stamp = String(millis)
+        let key = sharedKeyPrefix + String(repeating: "0", count: max(0, 15 - stamp.count)) + stamp
+            + "." + UUID().uuidString
+        defaults.set(String(decoding: encoded, as: UTF8.self), forKey: key)
+
+        // Over the cap: drop the oldest. Removing a key another process already removed is
+        // harmless, so this needs no coordination either.
+        let entries = sharedQueueEntries(defaults: defaults)
+        if entries.count > sharedQueueCap {
+            clearShared(Array(entries.prefix(entries.count - sharedQueueCap)), defaults: defaults)
+        }
     }
 
     /// Convenience for a plain text/link share with no shaping.
@@ -183,30 +208,61 @@ public enum CaptureRouting {
         enqueueShared(SharedItem(text: text), defaults: defaults)
     }
 
-    /// Read the queued shared items WITHOUT consuming them. Separated from the clear below so
-    /// the app can drop the queue only once the Takes are safely written — a crash or a failed
-    /// save between the two must not lose the user's content.
+    /// Read the queued items, oldest first, WITHOUT consuming them. The app drops them with
+    /// `clearShared(_:)` only once the Takes are safely written, so a crash or a failed save
+    /// between the two does not lose the user's content.
+    public static func sharedQueueEntries(defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> [SharedEntry] {
+        guard let defaults else { return [] }
+        let legacy = (defaults.stringArray(forKey: legacySharedQueueKey) ?? [])
+            .map { SharedEntry(item: decodeShared($0), storageKey: nil) }
+        let keyed = defaults.dictionaryRepresentation()
+            .compactMap { key, value -> (String, String)? in
+                guard key.hasPrefix(sharedKeyPrefix), let raw = value as? String else { return nil }
+                return (key, raw)
+            }
+            .sorted { $0.0 < $1.0 }
+            .map { SharedEntry(item: decodeShared($0.1), storageKey: $0.0) }
+        return legacy + keyed
+    }
+
+    /// The queued items alone, oldest first.
     public static func sharedQueue(defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> [SharedItem] {
-        (defaults?.stringArray(forKey: sharedQueueKey) ?? []).map { raw in
-            // Tolerant on purpose: anything that isn't our JSON is treated as plain text, so a
-            // share queued by an older build lands as a Take instead of being silently dropped.
-            (try? PlatformJSON.decode(SharedItem.self, from: Data(raw.utf8)))
-                ?? SharedItem(text: raw)
+        sharedQueueEntries(defaults: defaults).map(\.item)
+    }
+
+    /// Drop exactly these entries, which the app has now committed. A share that arrived
+    /// after they were read has its own key and is left alone.
+    public static func clearShared(_ entries: [SharedEntry],
+                                   defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
+        guard let defaults else { return }
+        for key in entries.compactMap(\.storageKey) { defaults.removeObject(forKey: key) }
+        let legacyCount = entries.filter { $0.storageKey == nil }.count
+        guard legacyCount > 0 else { return }
+        // Only an older build ever wrote the legacy array, so nothing appends to it now and
+        // dropping from its front cannot race a writer.
+        var legacy = defaults.stringArray(forKey: legacySharedQueueKey) ?? []
+        legacy.removeFirst(min(legacyCount, legacy.count))
+        if legacy.isEmpty {
+            defaults.removeObject(forKey: legacySharedQueueKey)
+        } else {
+            defaults.set(legacy, forKey: legacySharedQueueKey)
         }
     }
 
-    /// Drop the shared items the app has now committed. Takes the COUNT it consumed rather than
-    /// clearing wholesale, so a share that arrived while the app was mid-drain isn't discarded
-    /// unread.
+    /// Drop the first `consumed` items in queue order. Kept for callers that predate
+    /// `clearShared(_:)`; with per-key storage it no longer loses a share that arrives
+    /// mid-drain (that share sorts after the ones read), but if the cap trims the queue
+    /// between the read and this call it can remove an unread item, which
+    /// `clearShared(_:)` cannot.
     public static func clearSharedQueue(consumed: Int,
                                         defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
-        guard let defaults, consumed > 0 else { return }
-        var queue = defaults.stringArray(forKey: sharedQueueKey) ?? []
-        queue.removeFirst(min(consumed, queue.count))
-        if queue.isEmpty {
-            defaults.removeObject(forKey: sharedQueueKey)
-        } else {
-            defaults.set(queue, forKey: sharedQueueKey)
-        }
+        guard consumed > 0 else { return }
+        clearShared(Array(sharedQueueEntries(defaults: defaults).prefix(consumed)), defaults: defaults)
+    }
+
+    /// Tolerant on purpose: anything that isn't our JSON is treated as plain text, so a
+    /// share queued by an older build lands as a Take instead of being silently dropped.
+    private static func decodeShared(_ raw: String) -> SharedItem {
+        (try? PlatformJSON.decode(SharedItem.self, from: Data(raw.utf8))) ?? SharedItem(text: raw)
     }
 }
