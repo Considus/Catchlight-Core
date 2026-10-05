@@ -38,7 +38,7 @@ git config core.hooksPath hooks
 
 Core has no platform dependencies: Keychain, storage, file protection and the cloud folder are injected through protocols and implemented in each app. Keep it that way. No network code, ever (there is none today).
 
-No third-party dependencies without agreeing it first. The one agreed so far is `swift-crypto`, linked on Linux only (`linuxCrypto` in `Package.swift`). Every file that needs crypto imports it as:
+No third-party dependencies without the owner agreeing it first. The only one is `swift-crypto` (owner-agreed 2026-10-05), linked on Linux only (`linuxCrypto` in `Package.swift`). Every file that needs crypto imports it as:
 
 ```swift
 #if canImport(CryptoKit)
