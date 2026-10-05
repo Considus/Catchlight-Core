@@ -156,8 +156,11 @@ public enum TakeImporter {
     /// Whether a section heading could have been written for this metadata entry by
     /// `TakeExporter.heading(for:)`: the same kind (a 🔔 Reminder, a 📍 Reminder, or a
     /// Note/Task, which the metadata does not tell apart) and the same created day.
-    /// The day is compared loosely, one day either side, because the exporter rendered
-    /// it in the exporting device's zone and the importer reads it in its own.
+    /// The day is compared loosely because the exporter rendered it in the exporting
+    /// device's zone and the importer reads it in its own. Zones can be up to 26 hours
+    /// apart (UTC+14 and UTC−12), so a clean export's offset from the importer's midnight
+    /// can run from about −26h to +50h; the window allows two days before and three after.
+    /// The kind check does most of the guarding.
     static func headingMatches(_ heading: String, _ meta: TakeTransferMetadata) -> Bool {
         let kindMatches: Bool
         if meta.timeReminder != nil {
@@ -169,7 +172,7 @@ public enum TakeImporter {
         }
         guard kindMatches, let day = headingDate(heading) else { return false }
         let offset = meta.createdAt.timeIntervalSince(day)
-        return offset > -86_400 && offset < 2 * 86_400
+        return offset > -2 * 86_400 && offset < 3 * 86_400
     }
 
     /// Decode the trailing `<!-- catchlight:data … -->` block, or nil if absent/invalid.

@@ -225,6 +225,24 @@ final class TakeImporterTests: XCTestCase {
         XCTAssertNotEqual(takes[1].createdAt, d2)
     }
 
+    /// A clean export read in a zone up to 26 hours away still matches: the heading's
+    /// day is the EXPORTER's, so the true creation time can sit from about 26 hours before
+    /// the importer's midnight of that day to 50 hours after it.
+    func testHeadingMatches_acrossTheWidestZoneGap() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        let midnight = cal.date(from: DateComponents(year: 2026, month: 5, day: 14))!
+        for hours in [-26.0, 0, 23.9, 50] {
+            let at = midnight.addingTimeInterval(hours * 3600)
+            let meta = TakeTransferMetadata(from: Take(createdAt: at, modifiedAt: at,
+                                                       blocks: [.textLine("x")], isNote: true))
+            XCTAssertTrue(TakeImporter.headingMatches("Note — 2026-05-14", meta), "\(hours)h")
+        }
+        let far = midnight.addingTimeInterval(4 * 86_400)
+        XCTAssertFalse(TakeImporter.headingMatches("Note — 2026-05-14", TakeTransferMetadata(
+            from: Take(createdAt: far, modifiedAt: far, blocks: [.textLine("x")], isNote: true))))
+    }
+
     /// Known limit, pinned so a change to it is deliberate: a body line pasted in the
     /// exporter's OWN heading shape cannot be told apart from a section added by hand, so
     /// it splits off as its own Take and the file falls back to heading parsing. All the
