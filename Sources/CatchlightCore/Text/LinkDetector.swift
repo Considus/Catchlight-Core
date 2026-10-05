@@ -49,8 +49,14 @@ public enum LinkDetector {
         public let url: URL
     }
 
+    // NSDataDetector is Apple-only: swift-corelibs-foundation does not have it.
+    // Off Apple platforms pass 1 is absent and only bare domains link. Core ships
+    // only on Apple platforms; the Linux build exists to run the crypto and sync
+    // tests, and the LinkDetector suites skip there.
+    #if canImport(Darwin)
     private static let dataDetector = try? NSDataDetector(
         types: NSTextCheckingResult.CheckingType.link.rawValue)
+    #endif
 
     // A bare domain: labels separated by dots, a 2–24 letter TLD (captured for the
     // lookup), and an optional path. Matching stays case-insensitive; the casing
@@ -79,6 +85,7 @@ public enum LinkDetector {
         var matches: [Match] = []
         var taken: [NSRange] = []
 
+        #if canImport(Darwin)
         if let detector = dataDetector {
             for m in detector.matches(in: text, range: full) {
                 guard let url = m.url, let r = Range(m.range, in: text) else { continue }
@@ -108,6 +115,7 @@ public enum LinkDetector {
                 taken.append(m.range)
             }
         }
+        #endif
 
         if let regex = bareDomain {
             for m in regex.matches(in: text, range: full) {

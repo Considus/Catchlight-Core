@@ -205,14 +205,22 @@ public enum DeviceHandshake {
 }
 
 private extension Data {
-    /// Overwrite bytes in place with zeros. Uses `memset_s` (guaranteed not to be
+    /// Overwrite bytes in place with zeros. Uses `memset_s` on Apple platforms and
+    /// `explicit_bzero` on Linux (both guaranteed not to be
     /// optimised away) on the actual backing buffer — the previous
     /// `replaceSubrange` implementation could trigger a copy-on-write
     /// reallocation, zeroing a fresh copy while the original key bytes lived on.
     mutating func resetBytes(in range: Range<Int>) {
         withUnsafeMutableBytes { raw in
             guard let base = raw.baseAddress else { return }
+            #if canImport(Darwin)
             memset_s(base + range.lowerBound, raw.count - range.lowerBound, 0, range.count)
+            #elseif canImport(Glibc)
+            // glibc has no memset_s; explicit_bzero carries the same guarantee.
+            explicit_bzero(base + range.lowerBound, range.count)
+            #else
+            #error("No zeroing primitive that cannot be optimised away on this platform")
+            #endif
         }
     }
 }

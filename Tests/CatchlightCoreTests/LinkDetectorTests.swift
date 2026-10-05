@@ -12,6 +12,13 @@ import XCTest
 
 final class LinkDetectorTests: XCTestCase {
 
+    override func setUpWithError() throws {
+        #if !canImport(Darwin)
+        // These pin NSDataDetector's behaviour, which only Apple's Foundation has.
+        throw XCTSkip("LinkDetector needs NSDataDetector (Apple platforms only)")
+        #endif
+    }
+
     private func urls(_ text: String) -> [String] {
         LinkDetector.detect(in: text).map { $0.url.absoluteString }
     }
