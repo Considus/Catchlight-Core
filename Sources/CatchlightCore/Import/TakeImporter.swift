@@ -52,16 +52,28 @@ public enum TakeImporter {
             return parse(normalized, fileDate: fileDate).map { [$0] } ?? []
         }
 
-        let sections = splitSections(normalized)
+        var sections = splitSections(normalized)
         guard !sections.isEmpty else {
             return parse(normalized, fileDate: fileDate).map { [$0] } ?? []
         }
 
         // Use the enriched metadata only when it lines up 1:1 with the visible
-        // sections — if the user hand-edited the file (adding/removing a Take) the
-        // indices would desync, so fall back to heading parsing rather than mislabel.
+        // sections AND each section's heading agrees with its entry. A hand-edited file
+        // (a Take added or removed) can keep the count equal by coincidence, and a count
+        // check alone would then attach the metadata to the wrong Take.
         let metadata = extractMetadata(normalized)
-        let useMetadata = metadata?.count == sections.count
+        // The exporter writes body lines verbatim, so a Take whose text has a line
+        // starting `## ` (pasted Markdown) adds a section and breaks the 1:1 match.
+        // Before giving up on the metadata, split again on the exporter's own heading
+        // shape only; if THAT lines up, the extra section was body text. A pasted line
+        // that is itself exporter-shaped (`## Note — 2026-05-14`) cannot be told apart
+        // from a section added by hand, so it still splits and the file falls back to
+        // heading parsing.
+        if let metadata, !sectionsAlign(sections, with: metadata) {
+            let strict = splitSections(normalized, isHeading: isExporterHeading)
+            if sectionsAlign(strict, with: metadata) { sections = strict }
+        }
+        let useMetadata = metadata.map { sectionsAlign(sections, with: $0) } ?? false
 
         var takes: [Take] = []
         for (index, section) in sections.enumerated() {
@@ -86,7 +98,8 @@ public enum TakeImporter {
 
     /// Split the visible body into `(heading, body)` sections on `## ` lines, skipping
     /// the leading `--- … ---` frontmatter and stopping at the trailing data block.
-    static func splitSections(_ normalized: String) -> [Section] {
+    static func splitSections(_ normalized: String,
+                              isHeading: (String) -> Bool = { $0.hasPrefix("## ") }) -> [Section] {
         let lines = normalized.components(separatedBy: "\n")
         var sections: [Section] = []
         var heading: String?
@@ -112,7 +125,7 @@ public enum TakeImporter {
                 continue
             }
             if line.hasPrefix(TakeTransfer.dataBlockOpen) { break }  // machine block — stop
-            if line.hasPrefix("## ") {
+            if isHeading(line) {
                 flush()
                 heading = String(line.dropFirst(3))
             } else if heading != nil {
@@ -121,6 +134,45 @@ public enum TakeImporter {
         }
         flush()
         return sections
+    }
+
+    /// A line the exporter itself wrote as a section heading: `## Note — 2026-05-14`,
+    /// `## Task — …`, `## Reminder — …` (`TakeExporter.heading(for:)`).
+    private static let exporterHeadingRegex = try? NSRegularExpression(
+        pattern: #"^## (?:Note|Task|Reminder) — \d{4}-\d{2}-\d{2}(?: · .*)?$"#)
+
+    static func isExporterHeading(_ line: String) -> Bool {
+        guard let regex = exporterHeadingRegex else { return false }
+        return regex.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
+    }
+
+    /// True when there is one section per metadata entry and every heading matches
+    /// its entry (`headingMatches`).
+    static func sectionsAlign(_ sections: [Section], with metadata: [TakeTransferMetadata]) -> Bool {
+        sections.count == metadata.count
+            && zip(sections, metadata).allSatisfy { headingMatches($0.heading, $1) }
+    }
+
+    /// Whether a section heading could have been written for this metadata entry by
+    /// `TakeExporter.heading(for:)`: the same kind (a 🔔 Reminder, a 📍 Reminder, or a
+    /// Note/Task, which the metadata does not tell apart) and the same created day.
+    /// The day is compared loosely because the exporter rendered it in the exporting
+    /// device's zone and the importer reads it in its own. Zones can be up to 26 hours
+    /// apart (UTC+14 and UTC−12), so a clean export's offset from the importer's midnight
+    /// can run from about −26h to +50h; the window allows two days before and three after.
+    /// The kind check does most of the guarding.
+    static func headingMatches(_ heading: String, _ meta: TakeTransferMetadata) -> Bool {
+        let kindMatches: Bool
+        if meta.timeReminder != nil {
+            kindMatches = heading.hasPrefix("Reminder — ") && heading.contains("· 🔔 ")
+        } else if meta.locationReminder != nil {
+            kindMatches = heading.hasPrefix("Reminder — ") && heading.contains("· 📍 ")
+        } else {
+            kindMatches = heading.hasPrefix("Note — ") || heading.hasPrefix("Task — ")
+        }
+        guard kindMatches, let day = headingDate(heading) else { return false }
+        let offset = meta.createdAt.timeIntervalSince(day)
+        return offset > -2 * 86_400 && offset < 3 * 86_400
     }
 
     /// Decode the trailing `<!-- catchlight:data … -->` block, or nil if absent/invalid.
