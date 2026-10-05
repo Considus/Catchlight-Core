@@ -195,8 +195,11 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// whatever it says. It lives inside the item's file only, never in the manifest, because a
     /// phone rebuilds every manifest entry it writes and would drop it ([[D-326]]). A String for
     /// the same forward-compatibility reason as `kind`.
+    ///
+    /// Only a Script has one: setting it on a Take keeps nothing, so set `kind` first when making
+    /// a Script, and a Take's file can never carry it.
     public var pageMode: String? {
-        didSet { if pageMode == PageMode.continuous { pageMode = nil } }
+        didSet { if pageMode == PageMode.continuous || kind == nil { pageMode = nil } }
     }
 
     public enum PageMode {

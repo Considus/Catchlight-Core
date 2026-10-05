@@ -107,4 +107,30 @@ final class TakeKindTests: XCTestCase {
         XCTAssertEqual(imported.first(where: \.isScript)?.pageMode, Take.PageMode.usLetter)
         XCTAssertEqual(imported.filter { !$0.isScript }.count, 1)
     }
+
+    /// #19 review, second round: a page mode set on a Take (in any order, by any path) is not kept.
+    func testAPageModeOnATakeIsNeverKept() throws {
+        var take = fixture()
+        take.pageMode = Take.PageMode.a4
+        XCTAssertNil(take.pageMode)
+        XCTAssertEqual(String(data: try PlatformJSON.encode(take), encoding: .utf8), golden)
+
+        var script = fixture()
+        script.kind = ManifestEntry.Kind.script   // kind first, then the page mode
+        script.pageMode = Take.PageMode.a4
+        XCTAssertEqual(script.pageMode, Take.PageMode.a4)
+
+        // An export data block with a page mode but no kind imports as a plain Take.
+        var meta = TakeTransferMetadata(from: fixture())
+        meta.pageMode = Take.PageMode.a4
+        let block = String(data: try TakeTransfer.encoder().encode([meta]), encoding: .utf8)!
+        let markdown = TakeExporter.export([fixture()], exportedAt: created, timeZone: TimeZone(identifier: "UTC")!)
+        let open = markdown.range(of: TakeTransfer.dataBlockOpen)!
+        let close = markdown.range(of: TakeTransfer.dataBlockClose, range: open.upperBound..<markdown.endIndex)!
+        let tampered = markdown.replacingCharacters(in: open.upperBound..<close.lowerBound, with: "\n" + block + "\n")
+        let imported = TakeImporter.parseDocument(tampered, fileDate: created)
+        XCTAssertEqual(imported.count, 1)
+        XCTAssertNil(imported.first?.pageMode)
+        XCTAssertFalse(imported.first?.isScript ?? true)
+    }
 }
