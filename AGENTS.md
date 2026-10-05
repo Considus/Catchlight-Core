@@ -59,7 +59,7 @@ swift run   --scratch-path "$BUILD_DIR/spm" coreverify   # must pass before any 
 swift test  --scratch-path "$BUILD_DIR/spm"
 ```
 
-Read the test count, never the word "passed". CI also runs the suite on the iOS simulator (`xcodebuild test -scheme CatchlightCore-Package`), oldest and newest runtimes, and on Linux in the official Swift image (`linux-tests`), where the same known-answer vectors run against swift-crypto. The macOS and Linux `Executed N tests` lines should match.
+Read the test count, never the word "passed". CI also runs the suite on the iOS simulator (`xcodebuild test -scheme CatchlightCore-Package`), oldest and newest runtimes, and on Linux in the official Swift image (`linux-tests`), where the same known-answer vectors run against swift-crypto. The macOS and Linux `Executed N tests` lines differ only by Apple-only suites: Linux skips the two LinkDetector suites (they pin `NSDataDetector`) and compiles out 15 Spotlight tests (`CoreSpotlight`). Linux finds the shared store contract only through `LinuxTakeStoreContractTests`.
 
 To exercise the swift-crypto (BoringSSL) path on a Mac without Linux, copy the package to a scratch folder, point it at a local swift-crypto checkout with `let development = true` in that checkout's `Package.swift`, drop the platform condition from `linuxCrypto`, and replace the guarded imports with `import Crypto`. Never commit that setup.
 
