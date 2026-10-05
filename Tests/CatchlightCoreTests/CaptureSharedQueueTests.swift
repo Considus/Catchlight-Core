@@ -138,4 +138,46 @@ final class CaptureSharedQueueTests: XCTestCase {
         CaptureRouting.clearShared(read, defaults: defaults)
         XCTAssertEqual(CaptureRouting.sharedQueue(defaults: defaults).map(\.text), ["b"])
     }
+
+    /// The device clock moved back (a manual change or an NTP correction) while the queue
+    /// was full. The share just made must survive the cap, and sort after the older ones.
+    func testClockMovedBack_newShareSurvivesTheCapAndSortsLast() {
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        for i in 0..<CaptureRouting.sharedQueueCap {
+            CaptureRouting.enqueueShared(.init(text: "share \(i)"), defaults: defaults,
+                                         now: t0.addingTimeInterval(Double(i)))
+        }
+        CaptureRouting.enqueueShared(.init(text: "newest"), defaults: defaults,
+                                     now: t0.addingTimeInterval(-3600))
+        let texts = CaptureRouting.sharedQueue(defaults: defaults).map(\.text)
+        XCTAssertEqual(texts.count, CaptureRouting.sharedQueueCap)
+        XCTAssertEqual(texts.last, "newest")
+        XCTAssertEqual(texts.first, "share 1")
+    }
+
+    /// The count-based clear removes the first N in queue order. A share made mid-drain
+    /// with an earlier clock reading must still sort after the ones the app read.
+    func testClockMovedBack_countClearLeavesTheShareMadeMidDrain() {
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        CaptureRouting.enqueueShared(.init(text: "drained"), defaults: defaults, now: t0)
+        let count = CaptureRouting.sharedQueue(defaults: defaults).count
+        // The app is saving the Take it read when the share arrives.
+        CaptureRouting.enqueueShared(.init(text: "arrived mid-drain"), defaults: other,
+                                     now: t0.addingTimeInterval(-60))
+
+        CaptureRouting.clearSharedQueue(consumed: count, defaults: defaults)
+
+        XCTAssertEqual(CaptureRouting.sharedQueue(defaults: defaults).map(\.text), ["arrived mid-drain"])
+    }
+
+    /// The app saved the second legacy share but not the first, and clears only what it
+    /// saved. The unsaved share must stay queued.
+    func testLegacyClear_removesTheEntryPassedNotTheFirst() {
+        other.set(["not saved", "saved"], forKey: "capture.sharedQueue")
+        let entries = CaptureRouting.sharedQueueEntries(defaults: defaults)
+
+        CaptureRouting.clearShared([entries[1]], defaults: defaults)
+
+        XCTAssertEqual(CaptureRouting.sharedQueue(defaults: defaults).map(\.text), ["not saved"])
+    }
 }

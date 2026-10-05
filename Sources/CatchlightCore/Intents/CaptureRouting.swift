@@ -164,10 +164,12 @@ public enum CaptureRouting {
     }
 
     /// A queued item together with where it is stored, so a drain can remove exactly the
-    /// items it read (`clearShared(_:)`). `storageKey` is nil for an item in the legacy array.
+    /// items it read (`clearShared(_:)`). `storageKey` is nil for an item in the legacy array,
+    /// which is found again by its stored text (`legacyRaw`) rather than by its position.
     public struct SharedEntry: Equatable, Sendable {
         public let item: SharedItem
         let storageKey: String?
+        var legacyRaw: String? = nil
     }
 
     /// Append a shared item for the app to turn into a Take on next open.
@@ -188,8 +190,13 @@ public enum CaptureRouting {
         item.text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let defaults, !item.text.isEmpty,
               let encoded = try? PlatformJSON.encode(item) else { return }
-        let millis = max(0, Int64((now.timeIntervalSince1970 * 1000).rounded(.down)))
-        let stamp = String(millis)
+        // Never earlier than a key already queued, so a share always sorts after the ones
+        // before it even when the device clock has moved back (a manual change or an NTP
+        // correction). The count-based clear and the cap both rely on that order. Reading the
+        // existing keys here writes nothing back, so it adds no race.
+        let newest = sharedQueueEntries(defaults: defaults).compactMap { $0.storageKey.flatMap(millis(fromKey:)) }.max()
+        let clock = max(0, Int64((now.timeIntervalSince1970 * 1000).rounded(.down)))
+        let stamp = String(max(clock, (newest ?? -1) + 1))
         let key = sharedKeyPrefix + String(repeating: "0", count: max(0, 15 - stamp.count)) + stamp
             + "." + UUID().uuidString
         defaults.set(String(decoding: encoded, as: UTF8.self), forKey: key)
@@ -198,9 +205,11 @@ public enum CaptureRouting {
         // harmless, so this needs no coordination either. Only per-key entries count and are
         // trimmed: trimming the legacy array would make this process a writer of it again,
         // racing the app's drain, and an older build already capped that array itself.
+        // The share just written is never trimmed, whatever its key sorts as.
         let keyed = sharedQueueEntries(defaults: defaults).filter { $0.storageKey != nil }
         if keyed.count > sharedQueueCap {
-            clearShared(Array(keyed.prefix(keyed.count - sharedQueueCap)), defaults: defaults)
+            let older = keyed.filter { $0.storageKey != key }
+            clearShared(Array(older.prefix(keyed.count - sharedQueueCap)), defaults: defaults)
         }
     }
 
@@ -216,7 +225,7 @@ public enum CaptureRouting {
     public static func sharedQueueEntries(defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> [SharedEntry] {
         guard let defaults else { return [] }
         let legacy = (defaults.stringArray(forKey: legacySharedQueueKey) ?? [])
-            .map { SharedEntry(item: decodeShared($0), storageKey: nil) }
+            .map { SharedEntry(item: decodeShared($0), storageKey: nil, legacyRaw: $0) }
         let keyed = defaults.dictionaryRepresentation()
             .compactMap { key, value -> (String, String)? in
                 guard key.hasPrefix(sharedKeyPrefix), let raw = value as? String else { return nil }
@@ -238,12 +247,17 @@ public enum CaptureRouting {
                                    defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
         guard let defaults else { return }
         for key in entries.compactMap(\.storageKey) { defaults.removeObject(forKey: key) }
-        let legacyCount = entries.filter { $0.storageKey == nil }.count
-        guard legacyCount > 0 else { return }
-        // Only an older build ever wrote the legacy array, so nothing appends to it now and
-        // dropping from its front cannot race a writer.
+        let legacyDone = entries.compactMap(\.legacyRaw)
+        guard !legacyDone.isEmpty else { return }
+        // Remove each committed item by its text, not by position, so a share the app failed
+        // to save stays queued even when a later one was saved. Only an older build ever wrote
+        // this array. Its share extension could still append during the update itself, and that
+        // append can be lost here; iOS stops an app's extensions when it updates the app, so
+        // the window is the update, not normal use.
         var legacy = defaults.stringArray(forKey: legacySharedQueueKey) ?? []
-        legacy.removeFirst(min(legacyCount, legacy.count))
+        for raw in legacyDone {
+            if let i = legacy.firstIndex(of: raw) { legacy.remove(at: i) }
+        }
         if legacy.isEmpty {
             defaults.removeObject(forKey: legacySharedQueueKey)
         } else {
@@ -252,14 +266,20 @@ public enum CaptureRouting {
     }
 
     /// Drop the first `consumed` items in queue order. Kept for callers that predate
-    /// `clearShared(_:)`; with per-key storage it no longer loses a share that arrives
-    /// mid-drain (that share sorts after the ones read), but if the cap trims the queue
-    /// between the read and this call it can remove an unread item, which
-    /// `clearShared(_:)` cannot.
+    /// `clearShared(_:)`. A share that arrives mid-drain sorts after the ones read (enqueue
+    /// never writes a key earlier than one already queued), so it is left alone. Two cases
+    /// remain that only `clearShared(_:)` closes: the cap trimming the queue between the read
+    /// and this call, and two extension processes enqueueing in the same instant as the read.
     public static func clearSharedQueue(consumed: Int,
                                         defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
         guard consumed > 0 else { return }
         clearShared(Array(sharedQueueEntries(defaults: defaults).prefix(consumed)), defaults: defaults)
+    }
+
+    /// The time prefix of a per-key share, or nil for any other key.
+    private static func millis(fromKey key: String) -> Int64? {
+        let rest = key.dropFirst(sharedKeyPrefix.count)
+        return Int64(rest.prefix { $0 != "." })
     }
 
     /// Tolerant on purpose: anything that isn't our JSON is treated as plain text, so a
