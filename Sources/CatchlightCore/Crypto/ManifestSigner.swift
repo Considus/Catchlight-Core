@@ -15,7 +15,11 @@
 //
 
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 public struct ManifestSigner: Sendable {
     private let hmacKey: SymmetricKey

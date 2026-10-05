@@ -2,8 +2,11 @@
 //
 // Catchlight — CatchlightCore
 //
-// The platform-agnostic heart of Catchlight. Pure Swift + Apple CryptoKit only.
-// No UIKit, no SwiftUI, no SQLCipher, no third-party crypto inside this package —
+// The platform-agnostic heart of Catchlight. Pure Swift + Apple CryptoKit on Apple
+// platforms; swift-crypto (Apple's open-source implementation of the same API) on
+// Linux only, where CryptoKit does not exist. Every file that uses it imports
+// CryptoKit under `#if canImport(CryptoKit)` and falls back to `Crypto`, so Apple
+// builds never link swift-crypto. No UIKit, no SwiftUI, no SQLCipher —
 // every platform-specific dependency (storage, cloud folder) is injected through
 // a protocol (see Storage/ and Sync/). Master-key derivation is HKDF-SHA-256 via
 // CryptoKit (see Crypto/MasterKeyDerivation.swift). This is what makes the
@@ -13,10 +16,16 @@
 // readable by a future WebCrypto/WASM or Android/Tink client.
 //
 // It builds and its full test suite runs on macOS with the Command Line Tools
-// toolchain (Swift 5.9+). CryptoKit is a system framework on macOS, so HKDF,
-// ChaCha20-Poly1305, HMAC-SHA-256 and X25519 are all exercised for real here.
+// toolchain, and on Linux (CI runs both). CryptoKit is a system framework on
+// macOS, so HKDF, ChaCha20-Poly1305, HMAC-SHA-256 and X25519 are exercised for
+// real there; on Linux the same tests and vectors run against swift-crypto.
 //
 import PackageDescription
+
+/// swift-crypto's `Crypto` module, linked only where CryptoKit is unavailable.
+let linuxCrypto: Target.Dependency = .product(
+    name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux])
+)
 
 let package = Package(
     name: "CatchlightCore",
@@ -33,9 +42,15 @@ let package = Package(
         .library(name: "CatchlightCoreTestSupport", targets: ["CatchlightCoreTestSupport"]),
         .executable(name: "coreverify", targets: ["coreverify"])
     ],
+    dependencies: [
+        // Linux only (see the target conditions below). SwiftPM still resolves it
+        // on Apple platforms, but nothing there links it.
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0")
+    ],
     targets: [
         .target(
             name: "CatchlightCore",
+            dependencies: [linuxCrypto],
             path: "Sources/CatchlightCore"
         ),
         .target(
@@ -47,7 +62,7 @@ let package = Package(
         // Xcode toolchain / CI (`swift test` or the Xcode test action).
         .testTarget(
             name: "CatchlightCoreTests",
-            dependencies: ["CatchlightCore", "CatchlightCoreTestSupport"],
+            dependencies: ["CatchlightCore", "CatchlightCoreTestSupport", linuxCrypto],
             path: "Tests/CatchlightCoreTests"
         ),
         // A dependency-free executable that re-runs the same scenarios with a tiny
@@ -55,7 +70,7 @@ let package = Package(
         // Command-Line-Tools-only machine (no Xcode, no XCTest). `swift run coreverify`.
         .executableTarget(
             name: "coreverify",
-            dependencies: ["CatchlightCore"],
+            dependencies: ["CatchlightCore", linuxCrypto],
             path: "Sources/coreverify"
         )
     ]

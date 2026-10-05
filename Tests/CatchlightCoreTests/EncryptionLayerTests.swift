@@ -27,7 +27,11 @@
 //
 
 import XCTest
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 @testable import CatchlightCore
 
 final class EncryptionLayerTests: XCTestCase {
@@ -299,7 +303,7 @@ final class EncryptionLayerTests: XCTestCase {
         XCTAssertThrowsError(try decryptTake(sealed, masterKey: mk, takeUUID: uuid)) { error in
             // Either malformed or authentication-failed is acceptable; what is
             // NOT acceptable is silently returning altered plaintext.
-            guard let cryptoError = error as? CryptoError else {
+            guard let cryptoError = error as? CatchlightCore.CryptoError else {
                 return XCTFail("Unexpected error type: \(error)")
             }
             XCTAssertTrue(cryptoError == .authenticationFailed

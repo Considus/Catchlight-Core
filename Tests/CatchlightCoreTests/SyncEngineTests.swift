@@ -8,7 +8,11 @@
 //
 
 import XCTest
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import CatchlightCoreTestSupport
 @testable import CatchlightCore
 

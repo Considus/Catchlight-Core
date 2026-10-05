@@ -9,8 +9,10 @@
 //  solve. A single advisory lock file (`catchlight.lock`) in the cloud folder is
 //  the cheap, file-system-native serialisation: a device that wants to push reads
 //  the lock first, writes its own if absent (or stale), then deletes it on
-//  completion. iOS file coordination (`NSFileCoordinator`) provides the underlying
-//  read/write atomicity — this layer just expresses the policy.
+//  completion. This layer just expresses the policy. The underlying read/write
+//  atomicity belongs to the injected `CloudFolder`: the Apple apps implement it
+//  with file coordination (`NSFileCoordinator`), which Core never references, so
+//  this file and the sync engine build unchanged on Linux.
 //
 //  The lock is ADVISORY, not authoritative: a determined attacker with cloud-folder
 //  write access could ignore it. The encryption layer (per-item AES-GCM + manifest

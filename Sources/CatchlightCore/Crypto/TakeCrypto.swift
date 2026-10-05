@@ -28,7 +28,11 @@
 //
 
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 // MARK: - CryptoService (generic AES-256-GCM)
 

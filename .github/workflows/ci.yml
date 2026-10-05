@@ -7,6 +7,11 @@ name: CI
 #   ios-tests  — the same XCTest suite on the iOS simulator, oldest supported runtime
 #                and newest, because the apps run Core on iOS as well as macOS and a
 #                CryptoKit or Foundation difference would only show there.
+#   linux-tests — `swift test` + `swift run coreverify` in the official Swift image on
+#                Linux, where Core uses swift-crypto in place of CryptoKit and
+#                swift-corelibs-foundation in place of Apple's Foundation. The
+#                known-answer vectors in EncryptionLayerTests must hold on both, so
+#                compare its "Executed N tests" line with core-tests'.
 
 on:
   push:
@@ -42,6 +47,30 @@ jobs:
 
       - name: swift test
         run: swift test --enable-code-coverage
+
+      - name: swift run coreverify
+        run: swift run coreverify
+
+  linux-tests:
+    name: Core on Linux (swift test + coreverify)
+    runs-on: ubuntu-24.04
+    container:
+      # swift:6.2.4-noble, pinned by digest like the actions.
+      image: swift@sha256:eccc7a97f9b9881d9659e2e788081fd7675f86d39793b51200bfb178398b3784
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache SwiftPM
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build
+          key: linux-swift-6.2.4-spm-${{ hashFiles('Package.swift') }}
+          restore-keys: |
+            linux-swift-6.2.4-spm-
+
+      - name: swift test
+        run: swift test
 
       - name: swift run coreverify
         run: swift run coreverify

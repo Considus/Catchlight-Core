@@ -34,7 +34,11 @@
 //
 
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// A Take whose cloud copy failed verification (its bytes no longer match the manifest's HMAC)
 /// and which only the user can settle: the manifest names a newer version than this device holds,

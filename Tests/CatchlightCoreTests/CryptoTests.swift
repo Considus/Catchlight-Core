@@ -6,7 +6,11 @@
 //
 
 import XCTest
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import CatchlightCoreTestSupport
 @testable import CatchlightCore
 
@@ -116,7 +120,7 @@ final class CryptoTests: XCTestCase {
         var combined = try encryptTake(Data("secret".utf8), masterKey: mk, takeUUID: uuid)
         combined[combined.count - 1] ^= 0xFF   // flip a tag byte
         XCTAssertThrowsError(try decryptTake(combined, masterKey: mk, takeUUID: uuid)) { error in
-            XCTAssertEqual(error as? CryptoError, .authenticationFailed)
+            XCTAssertEqual(error as? CatchlightCore.CryptoError, .authenticationFailed)
         }
     }
 
@@ -133,7 +137,7 @@ final class CryptoTests: XCTestCase {
         let keyB = SymmetricKey(size: .bits256)
         let combined = try CryptoService.encrypt(Data("secret".utf8), key: keyA)
         XCTAssertThrowsError(try CryptoService.decrypt(combined, key: keyB)) { error in
-            XCTAssertEqual(error as? CryptoError, .authenticationFailed)
+            XCTAssertEqual(error as? CatchlightCore.CryptoError, .authenticationFailed)
         }
     }
 
