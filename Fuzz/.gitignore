@@ -1,0 +1,5 @@
+# Fuzzing output (see README.md).
+.build-seeds/
+seeds/
+corpus/
+artifacts/

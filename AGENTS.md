@@ -63,6 +63,8 @@ Read the test count, never the word "passed". CI also runs the suite on the iOS 
 
 To exercise the swift-crypto (BoringSSL) path on a Mac without Linux, copy the package to a scratch folder, point it at a local swift-crypto checkout with `let development = true` in that checkout's `Package.swift`, drop the platform condition from `linuxCrypto`, and replace the guarded imports with `import Crypto`. Never commit that setup.
 
+`Fuzz/` is a separate SwiftPM package of libFuzzer targets over Core's untrusted-input parsers (import, manifest, blob, recovery phrase). The root build never sees it, and it runs on Linux only; `Fuzz/README.md` has the commands. Every crash it finds is pinned in `FuzzRegressionTests`, and lands in the same PR as its fix, because a trap kills the whole test run.
+
 **An expected value comes from outside the code under test**: a known-good literal, a worked example, the spec, or a captured fixture. Tests live at public seams, not internals.
 
 `Scripts/generate_tld_list.py` regenerates `Sources/CatchlightCore/Text/TLDList.swift` from IANA. The nightly audit checks the list for drift (`Catchlight-Ops/check_tld_list.py`). The Mac prototype's `ui/tlds.js` is a copy of the same list and is refreshed with it.

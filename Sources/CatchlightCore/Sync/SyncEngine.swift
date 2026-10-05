@@ -527,11 +527,16 @@ public final class SyncEngine {
         let pendingTombstoneByID = Dictionary(pendingLocal.map { ($0.id, $0.deletedAt) },
                                               uniquingKeysWith: { first, _ in first })
         if !pendingLocal.isEmpty {
-            let remoteTombstones = Dictionary(uniqueKeysWithValues: manifest.tombstones.map { ($0.uuid, $0) })
+            // A manifest from another client may list one id twice; keep the newest record
+            // rather than trapping, as push's own merge by id already does.
+            var remoteDeletedAt: [UUID: Date] = [:]
+            for remote in manifest.tombstones {
+                guard let date = ISO8601.date(from: remote.deletedAt) else { continue }
+                remoteDeletedAt[remote.uuid] = max(remoteDeletedAt[remote.uuid] ?? date, date)
+            }
             let confirmed = pendingLocal.filter { local in
-                guard let remote = remoteTombstones[local.id],
-                      let remoteDeletedAt = ISO8601.date(from: remote.deletedAt) else { return false }
-                return remoteDeletedAt >= local.deletedAt
+                guard let remote = remoteDeletedAt[local.id] else { return false }
+                return remote >= local.deletedAt
             }
             try store.purgeTombstones(ids: confirmed.map(\.id))
         }
