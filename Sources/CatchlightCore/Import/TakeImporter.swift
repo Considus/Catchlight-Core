@@ -52,7 +52,7 @@ public enum TakeImporter {
             return parse(normalized, fileDate: fileDate).map { [$0] } ?? []
         }
 
-        let sections = splitSections(normalized)
+        var sections = splitSections(normalized)
         guard !sections.isEmpty else {
             return parse(normalized, fileDate: fileDate).map { [$0] } ?? []
         }
@@ -61,6 +61,14 @@ public enum TakeImporter {
         // sections — if the user hand-edited the file (adding/removing a Take) the
         // indices would desync, so fall back to heading parsing rather than mislabel.
         let metadata = extractMetadata(normalized)
+        // The exporter writes body lines verbatim, so a Take whose text has a line
+        // starting `## ` (pasted Markdown) adds a section and breaks the 1:1 match.
+        // Before giving up on the metadata, split again on the exporter's own heading
+        // shape only; if THAT lines up, the extra section was body text.
+        if let metadata, metadata.count != sections.count {
+            let strict = splitSections(normalized, isHeading: isExporterHeading)
+            if strict.count == metadata.count { sections = strict }
+        }
         let useMetadata = metadata?.count == sections.count
 
         var takes: [Take] = []
@@ -86,7 +94,8 @@ public enum TakeImporter {
 
     /// Split the visible body into `(heading, body)` sections on `## ` lines, skipping
     /// the leading `--- … ---` frontmatter and stopping at the trailing data block.
-    static func splitSections(_ normalized: String) -> [Section] {
+    static func splitSections(_ normalized: String,
+                              isHeading: (String) -> Bool = { $0.hasPrefix("## ") }) -> [Section] {
         let lines = normalized.components(separatedBy: "\n")
         var sections: [Section] = []
         var heading: String?
@@ -112,7 +121,7 @@ public enum TakeImporter {
                 continue
             }
             if line.hasPrefix(TakeTransfer.dataBlockOpen) { break }  // machine block — stop
-            if line.hasPrefix("## ") {
+            if isHeading(line) {
                 flush()
                 heading = String(line.dropFirst(3))
             } else if heading != nil {
@@ -121,6 +130,16 @@ public enum TakeImporter {
         }
         flush()
         return sections
+    }
+
+    /// A line the exporter itself wrote as a section heading: `## Note — 2026-05-14`,
+    /// `## Task — …`, `## Reminder — …` (`TakeExporter.heading(for:)`).
+    private static let exporterHeadingRegex = try? NSRegularExpression(
+        pattern: #"^## (?:Note|Task|Reminder) — \d{4}-\d{2}-\d{2}(?: · .*)?$"#)
+
+    static func isExporterHeading(_ line: String) -> Bool {
+        guard let regex = exporterHeadingRegex else { return false }
+        return regex.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
     }
 
     /// Decode the trailing `<!-- catchlight:data … -->` block, or nil if absent/invalid.
