@@ -155,8 +155,12 @@ public final class SyncEngine {
     /// re-sign the manifest.
     /// - Parameter isCancelled: cooperative cancellation seam (BGTask expiry).
     @discardableResult
+    /// - Parameter heldIDs: Takes the pull has just reported as conflicts. Neither version is
+    ///   uploaded until the user picks one: resolving stamps the winner as a fresh edit, and the
+    ///   push after that uploads it (R4, owner decision 2026-10-05).
     public func pushOutbound(isCancelled: () -> Bool = { false },
-                             repairing repairIDs: Set<UUID> = []) throws -> SyncReport {
+                             repairing repairIDs: Set<UUID> = [],
+                             holding heldIDs: Set<UUID> = []) throws -> SyncReport {
         guard let cloud else { throw SyncError.noCloudFolderConfigured }
         try acquireLock(on: cloud)
         // Release on success OR failure — never leave a lock behind.
@@ -198,6 +202,10 @@ public final class SyncEngine {
         let changed = try store.takesModified(since: lastSync)
         for take in changed {
             if isCancelled() { throw CancellationError() }
+            // A Take waiting for the user's choice keeps whatever the cloud holds. Uploading
+            // here would replace the other device's version before the user has picked one.
+            // Once that version has become a Script, the D-315 fork below applies instead.
+            if heldIDs.contains(take.id), entriesBeforePush[take.id]?.isTake != false { continue }
             // Never upload over a Script holding an edit this device has not seen (D-315):
             // keep this edit as a new Take instead, uploaded now.
             if let e = entriesBeforePush[take.id], Self.changedElsewhere(e, since: lastSync) {
@@ -299,6 +307,7 @@ public final class SyncEngine {
         for take in localTakes where !tombstonedIds.contains(take.id) {
             if isCancelled() { throw CancellationError() }
             if let entry = entries[take.id] {
+                if heldIDs.contains(take.id), entriesBeforePush[take.id]?.isTake != false { continue }   // as step 1
                 if let before = entriesBeforePush[take.id],
                    Self.changedElsewhere(before, since: lastSync) {   // D-315, as step 1
                     // Only an edit newer than the last sync needs keeping; anything older is
@@ -699,7 +708,8 @@ public final class SyncEngine {
         DiagnosticsLog.shared.record(.syncPullOK, "Sync: pull ok")
         do {
             let out = try pushOutbound(isCancelled: isCancelled,
-                                       repairing: Set(report.repairCandidates))
+                                       repairing: Set(report.repairCandidates),
+                                       holding: Set(report.conflicts.map(\.local.id)))
             report.uploaded = out.uploaded
             report.heldBack = out.heldBack
             report.repaired = out.repaired
