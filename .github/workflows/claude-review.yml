@@ -5,6 +5,7 @@ name: Claude review
 # keep plan usage down. For a fresh review of the latest commit, add the
 # 're-review' label (remove it first if it is already on). Closing and reopening
 # the PR also works, but it starts Greptile again too, which spends a credit.
+# A PR opened before this trigger existed needs its branch updated first.
 #
 # The job FAILS if the review posts nothing. A run can end `success` having
 # reviewed nothing (2026-10-01, Considus-Ops #123: two turns, 8 refused tool
