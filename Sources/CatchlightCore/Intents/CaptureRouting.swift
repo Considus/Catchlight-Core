@@ -195,10 +195,12 @@ public enum CaptureRouting {
         defaults.set(String(decoding: encoded, as: UTF8.self), forKey: key)
 
         // Over the cap: drop the oldest. Removing a key another process already removed is
-        // harmless, so this needs no coordination either.
-        let entries = sharedQueueEntries(defaults: defaults)
-        if entries.count > sharedQueueCap {
-            clearShared(Array(entries.prefix(entries.count - sharedQueueCap)), defaults: defaults)
+        // harmless, so this needs no coordination either. Only per-key entries count and are
+        // trimmed: trimming the legacy array would make this process a writer of it again,
+        // racing the app's drain, and an older build already capped that array itself.
+        let keyed = sharedQueueEntries(defaults: defaults).filter { $0.storageKey != nil }
+        if keyed.count > sharedQueueCap {
+            clearShared(Array(keyed.prefix(keyed.count - sharedQueueCap)), defaults: defaults)
         }
     }
 

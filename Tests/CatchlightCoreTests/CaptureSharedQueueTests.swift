@@ -120,6 +120,16 @@ final class CaptureSharedQueueTests: XCTestCase {
         XCTAssertEqual(CaptureRouting.sharedQueue(defaults: defaults).map(\.text), ["new"])
     }
 
+    /// The cap trim runs in the share extension, so it must never rewrite the legacy array
+    /// the app may be draining at the same moment.
+    func testCap_neverTrimsTheLegacyArray() {
+        let legacy = (0..<CaptureRouting.sharedQueueCap).map { "old \($0)" }
+        other.set(legacy, forKey: "capture.sharedQueue")
+        CaptureRouting.enqueueShared(.init(text: "new"), defaults: defaults)
+        XCTAssertEqual(other.stringArray(forKey: "capture.sharedQueue"), legacy)
+        XCTAssertEqual(CaptureRouting.sharedQueue(defaults: defaults).last?.text, "new")
+    }
+
     func testClearShared_leavesItemsItDidNotRead() {
         let t0 = Date(timeIntervalSince1970: 1_700_000_000)
         CaptureRouting.enqueueShared(.init(text: "a"), defaults: defaults, now: t0)
