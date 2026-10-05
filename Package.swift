@@ -4,7 +4,7 @@
 //
 // The platform-agnostic heart of Catchlight. Pure Swift + Apple CryptoKit on Apple
 // platforms; swift-crypto (Apple's open-source implementation of the same API) on
-// Linux only, where CryptoKit does not exist. Every file that uses it imports
+// Linux and Windows only, where CryptoKit does not exist. Every file that uses it imports
 // CryptoKit under `#if canImport(CryptoKit)` and falls back to `Crypto`, so Apple
 // builds never link swift-crypto. No UIKit, no SwiftUI, no SQLCipher —
 // every platform-specific dependency (storage, cloud folder) is injected through
@@ -22,9 +22,10 @@
 //
 import PackageDescription
 
-/// swift-crypto's `Crypto` module, linked only where CryptoKit is unavailable.
+/// swift-crypto's `Crypto` module, linked only where CryptoKit is unavailable
+/// (Linux and Windows).
 let linuxCrypto: Target.Dependency = .product(
-    name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux])
+    name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux, .windows])
 )
 
 let package = Package(
@@ -43,7 +44,7 @@ let package = Package(
         .executable(name: "coreverify", targets: ["coreverify"])
     ],
     dependencies: [
-        // Linux only (see the target conditions below). SwiftPM still resolves it
+        // Linux and Windows only (see the target conditions below). SwiftPM still resolves it
         // on Apple platforms, but nothing there links it.
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0")
     ],

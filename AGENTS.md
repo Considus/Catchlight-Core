@@ -38,7 +38,7 @@ git config core.hooksPath hooks
 
 Core has no platform dependencies: Keychain, storage, file protection and the cloud folder are injected through protocols and implemented in each app. Keep it that way. No network code, ever (there is none today).
 
-No third-party dependencies without the owner agreeing it first. The only one is `swift-crypto` (owner-agreed 2026-10-05), linked on Linux only (`linuxCrypto` in `Package.swift`). Every file that needs crypto imports it as:
+No third-party dependencies without the owner agreeing it first. The only one is `swift-crypto` (owner-agreed 2026-10-05), linked on Linux and Windows only (`linuxCrypto`, named before Windows joined, in `Package.swift`). Every file that needs crypto imports it as:
 
 ```swift
 #if canImport(CryptoKit)
@@ -59,7 +59,7 @@ swift run   --scratch-path "$BUILD_DIR/spm" coreverify   # must pass before any 
 swift test  --scratch-path "$BUILD_DIR/spm"
 ```
 
-Read the test count, never the word "passed". CI also runs the suite on the iOS simulator (`xcodebuild test -scheme CatchlightCore-Package`), oldest and newest runtimes, and on Linux in the official Swift image (`linux-tests`), where the same known-answer vectors run against swift-crypto. The macOS and Linux `Executed N tests` lines differ only by Apple-only suites: Linux skips the two LinkDetector suites (they pin `NSDataDetector`) and compiles out 15 Spotlight tests (`CoreSpotlight`). Linux also never runs the 31 `TakeStoreContractTests`: they live in the `CatchlightCoreTestSupport` library, and Linux test discovery sees only methods declared in the test target (a subclass there inherits none it can find). Expect Linux to report 46 fewer tests than macOS (the 15 Spotlight and 31 contract tests), and 26 of the tests it does report (the LinkDetector suites) to be skipped.
+Read the test count, never the word "passed". CI also runs the suite on the iOS simulator (`xcodebuild test -scheme CatchlightCore-Package`), oldest and newest runtimes, on Linux in the official Swift image (`linux-tests`) and on Windows with the swift.org toolchain (`windows-tests`), where the same known-answer vectors run against swift-crypto. The macOS and Linux `Executed N tests` lines differ only by Apple-only suites: Linux skips the two LinkDetector suites (they pin `NSDataDetector`) and compiles out 15 Spotlight tests (`CoreSpotlight`). Linux also never runs the 31 `TakeStoreContractTests`: they live in the `CatchlightCoreTestSupport` library, and Linux test discovery sees only methods declared in the test target (a subclass there inherits none it can find). Expect Linux to report 46 fewer tests than macOS (the 15 Spotlight and 31 contract tests), and 26 of the tests it does report (the LinkDetector suites) to be skipped. Windows has no `NSDataDetector` or `CoreSpotlight` either, so its count should match Linux's; a difference means a suite was dropped or compiled out, and is worth reading before merging.
 
 To exercise the swift-crypto (BoringSSL) path on a Mac without Linux, copy the package to a scratch folder, point it at a local swift-crypto checkout with `let development = true` in that checkout's `Package.swift`, drop the platform condition from `linuxCrypto`, and replace the guarded imports with `import Crypto`. Never commit that setup.
 

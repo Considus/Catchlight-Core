@@ -12,6 +12,8 @@ name: CI
 #                swift-corelibs-foundation in place of Apple's Foundation. The
 #                known-answer vectors in EncryptionLayerTests must hold on both, so
 #                compare its "Executed N tests" line with core-tests'.
+#   windows-tests — the same two commands on Windows with the swift.org toolchain,
+#                again on swift-crypto. Same count comparison.
 
 on:
   push:
@@ -68,6 +70,28 @@ jobs:
           key: linux-swift-6.2.4-spm-${{ hashFiles('Package.swift') }}
           restore-keys: |
             linux-swift-6.2.4-spm-
+
+      - name: swift test
+        run: swift test
+
+      - name: swift run coreverify
+        run: swift run coreverify
+
+  windows-tests:
+    name: Core on Windows (swift test + coreverify)
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Swift 6.2.4
+        # Pinned by SHA. On an installer failure it uploads logs with
+        # actions/upload-artifact by tag, which this pin does not freeze; its
+        # cache input (actions/cache/restore by tag) is left off for that reason.
+        uses: compnerd/gha-setup-swift@bbae8ce86bac5a3449f3992b3d88bc4ca25f2057 # v0.5.0
+        with:
+          swift-version: swift-6.2.4-release
+          swift-build: 6.2.4-RELEASE
 
       - name: swift test
         run: swift test
