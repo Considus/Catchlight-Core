@@ -178,11 +178,16 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// What this item IS, the same value its manifest entry carries ([[D-315]], [[D-326]]): nil for a
     /// Take, `ManifestEntry.Kind.script` for a Script (a long-form Take, [[D-265]]). A copy lives in
     /// the item's own encrypted file so the file explains itself without its manifest (a backup,
-    /// an export). A String rather than an enum so a kind from a newer client survives a round trip
+    /// a Markdown export, which carries it in its data block). A String rather than an enum so a kind from a newer client survives a round trip
     /// here untouched. A Take is the ABSENCE of a kind, never "take", so one item has one encoding
     /// and every Take's bytes stay as they were before this field existed.
     public var kind: String? {
-        didSet { if kind == ManifestEntry.Kind.take { kind = nil } }
+        didSet {
+            if kind == ManifestEntry.Kind.take { kind = nil }
+            // A page mode belongs to a Script: an item that becomes a Take drops it, so a Take's
+            // file never carries a Script field ([[D-326]]).
+            if kind == nil { pageMode = nil }
+        }
     }
 
     /// How a Script is laid out: continuous (the default, stored as nil), A4 or US Letter
@@ -238,7 +243,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         self.manualOrder = manualOrder
         // didSet doesn't fire in init either: the same one-encoding rule, applied here.
         self.kind = kind == ManifestEntry.Kind.take ? nil : kind
-        self.pageMode = pageMode == PageMode.continuous ? nil : pageMode
+        self.pageMode = self.kind == nil || pageMode == PageMode.continuous ? nil : pageMode
     }
 
     // MARK: - Derived content accessors
@@ -597,7 +602,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         let kind = try c.decodeIfPresent(String.self, forKey: .kind)
         self.kind = kind == ManifestEntry.Kind.take ? nil : kind
         let pageMode = try c.decodeIfPresent(String.self, forKey: .pageMode)
-        self.pageMode = pageMode == PageMode.continuous ? nil : pageMode
+        self.pageMode = self.kind == nil || pageMode == PageMode.continuous ? nil : pageMode
         // NOTE for future versions: new fields added here MUST use
         // `decodeIfPresent` with a default so older payloads keep decoding.
     }

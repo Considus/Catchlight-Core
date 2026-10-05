@@ -78,4 +78,33 @@ final class TakeKindTests: XCTestCase {
         XCTAssertEqual(opened, script)
         XCTAssertTrue(opened.isScript)
     }
+
+    /// #19 review (Greptile): a Script becoming a Take drops its page mode, so the Take's bytes
+    /// carry no Script field.
+    func testBecomingATakeDropsThePageMode() throws {
+        var script = fixture(kind: ManifestEntry.Kind.script, pageMode: Take.PageMode.a4)
+        script.kind = nil
+        XCTAssertNil(script.pageMode)
+        XCTAssertEqual(String(data: try PlatformJSON.encode(script), encoding: .utf8), golden)
+        XCTAssertNil(fixture(kind: nil, pageMode: Take.PageMode.a4).pageMode, "a Take is never built with one")
+        let decoded = try PlatformJSON.decode(Take.self, from: Data(golden.replacingOccurrences(
+            of: #""schemaVersion":3"#, with: #""schemaVersion":3,"pageMode":"a4""#).utf8))
+        XCTAssertNil(decoded.pageMode, "a Take read with a stray page mode drops it")
+    }
+
+    /// #19 review (Claude): a Script exported to Markdown imports as a Script, page mode and all,
+    /// and an exported Take's data block gains nothing.
+    func testAnExportedScriptImportsAsAScript() throws {
+        let script = fixture(kind: ManifestEntry.Kind.script, pageMode: Take.PageMode.usLetter)
+        let take = fixture()
+        let meta = String(data: try TakeTransfer.encoder().encode([TakeTransferMetadata(from: take)]), encoding: .utf8)!
+        XCTAssertFalse(meta.contains("kind") || meta.contains("pageMode"), meta)
+
+        let markdown = TakeExporter.export([script, take], exportedAt: created, timeZone: TimeZone(identifier: "UTC")!)
+        let imported = TakeImporter.parseDocument(markdown, fileDate: created)
+        XCTAssertEqual(imported.count, 2)
+        XCTAssertEqual(imported.filter(\.isScript).count, 1)
+        XCTAssertEqual(imported.first(where: \.isScript)?.pageMode, Take.PageMode.usLetter)
+        XCTAssertEqual(imported.filter { !$0.isScript }.count, 1)
+    }
 }
