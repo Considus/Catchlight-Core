@@ -203,6 +203,44 @@ final class TakeImporterTests: XCTestCase {
         XCTAssertEqual(takes.map(\.plainText), ["a plain note", "added by hand"])
     }
 
+    /// A hand edit that removes one Take and adds another keeps the section count equal
+    /// to the metadata count. The added heading does not match the removed Take's entry,
+    /// so the metadata is NOT attached by position (which would have made the new section
+    /// an Obie with the old Take's timestamps); the file falls back to heading parsing.
+    func testHandEditKeepingTheCount_doesNotAttachMetadataToTheWrongTake() {
+        let d1 = Date(timeIntervalSince1970: 1_700_000_000)
+        let d2 = d1.addingTimeInterval(60)
+        let note = Take(createdAt: d1, modifiedAt: d1, blocks: [.textLine("a plain note")], isNote: true)
+        var obie = Take(createdAt: d2, modifiedAt: d2, blocks: [.textLine("the one Obie")], isObie: true)
+        obie.normaliseActivityFloor()
+        let exported = TakeExporter.export([note, obie], exportedAt: d1)
+        let obieSection = "## \(TakeExporter.heading(for: obie))\nthe one Obie\n"
+        XCTAssertTrue(exported.contains(obieSection))
+        let edited = exported.replacingOccurrences(of: obieSection,
+                                                   with: "## Note — 2026-10-05\nadded by hand\n")
+
+        let takes = TakeImporter.parseDocument(edited, fileDate: d1)
+        XCTAssertEqual(takes.map(\.plainText), ["a plain note", "added by hand"])
+        XCTAssertFalse(takes[1].isObie, "the removed Obie's metadata stays with nobody")
+        XCTAssertNotEqual(takes[1].createdAt, d2)
+    }
+
+    /// Known limit, pinned so a change to it is deliberate: a body line pasted in the
+    /// exporter's OWN heading shape cannot be told apart from a section added by hand, so
+    /// it splits off as its own Take and the file falls back to heading parsing. All the
+    /// text is kept; the metadata (Important here) is not.
+    func testBodyLineInExporterHeadingShape_splitsAndFallsBackToHeadings() {
+        let d1 = Date(timeIntervalSince1970: 1_700_000_000)
+        var pasted = Take(createdAt: d1, modifiedAt: d1,
+                          blocks: [.textLine("copied from an export\n## Note — 2026-05-14\nold text")],
+                          isNote: true)
+        pasted.isImportant = true
+        let exported = TakeExporter.export([pasted], exportedAt: d1)
+        let takes = TakeImporter.parseDocument(exported, fileDate: d1)
+        XCTAssertEqual(takes.map(\.plainText), ["copied from an export", "old text"])
+        XCTAssertFalse(takes[0].isImportant)
+    }
+
     /// The accepted cost of the `## ` fix (owner 2026-10-05): a section added by hand under
     /// a FREEFORM heading cannot be told apart from pasted body text, so it stays inside
     /// the Take above it. Its text is kept; the metadata is kept for every Take.
