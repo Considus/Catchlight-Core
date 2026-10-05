@@ -79,7 +79,10 @@ jobs:
 
   windows-tests:
     name: Core on Windows (swift test + coreverify)
-    runs-on: windows-2025
+    # windows-2022, not 2025: the 2025 image's Visual Studio 18 C++ library refuses any
+    # Clang older than 20 (error STL1000), and Swift 6.2.4 ships Clang 19. Move both
+    # together when the Swift version moves.
+    runs-on: windows-2022
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
