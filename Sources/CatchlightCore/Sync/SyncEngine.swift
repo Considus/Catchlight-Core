@@ -204,7 +204,8 @@ public final class SyncEngine {
             if isCancelled() { throw CancellationError() }
             // A Take waiting for the user's choice keeps whatever the cloud holds. Uploading
             // here would replace the other device's version before the user has picked one.
-            if heldIDs.contains(take.id) { continue }
+            // Once that version has become a Script, the D-315 fork below applies instead.
+            if heldIDs.contains(take.id), entriesBeforePush[take.id]?.isTake != false { continue }
             // Never upload over a Script holding an edit this device has not seen (D-315):
             // keep this edit as a new Take instead, uploaded now.
             if let e = entriesBeforePush[take.id], Self.changedElsewhere(e, since: lastSync) {
@@ -306,7 +307,7 @@ public final class SyncEngine {
         for take in localTakes where !tombstonedIds.contains(take.id) {
             if isCancelled() { throw CancellationError() }
             if let entry = entries[take.id] {
-                if heldIDs.contains(take.id) { continue }   // waiting for the user, as step 1
+                if heldIDs.contains(take.id), entriesBeforePush[take.id]?.isTake != false { continue }   // as step 1
                 if let before = entriesBeforePush[take.id],
                    Self.changedElsewhere(before, since: lastSync) {   // D-315, as step 1
                     // Only an edit newer than the last sync needs keeping; anything older is
