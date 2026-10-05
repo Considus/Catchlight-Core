@@ -26,7 +26,9 @@ import CryptoKit
 import Crypto
 #endif
 #if os(Windows)
-import WinSDK
+// Only the one function: the whole module also declares a `UUID` (the C GUID type), which
+// makes Foundation's `UUID` ambiguous everywhere in this file.
+import func WinSDK.RtlSecureZeroMemory
 #endif
 
 /// Written by the NEW device to `catchlight-device-request-{uuid}.json`.
@@ -223,7 +225,7 @@ private extension Data {
             explicit_bzero(base + range.lowerBound, range.count)
             #elseif os(Windows)
             // SecureZeroMemory is a macro over this, so Swift sees only this name.
-            RtlSecureZeroMemory(base + range.lowerBound, SIZE_T(range.count))
+            RtlSecureZeroMemory(base + range.lowerBound, numericCast(range.count))
             #else
             #error("No zeroing primitive that cannot be optimised away on this platform")
             #endif
