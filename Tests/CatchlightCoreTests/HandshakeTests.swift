@@ -6,7 +6,11 @@
 //
 
 import XCTest
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 @testable import CatchlightCore
 
 final class HandshakeTests: XCTestCase {
@@ -63,7 +67,7 @@ final class HandshakeTests: XCTestCase {
         XCTAssertThrowsError(
             try DeviceHandshake.unwrapMasterKey(response: response, ephemeralPrivate: attackerPrivate)
         ) { error in
-            XCTAssertEqual(error as? CryptoError, .authenticationFailed)
+            XCTAssertEqual(error as? CatchlightCore.CryptoError, .authenticationFailed)
         }
     }
 

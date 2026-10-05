@@ -48,7 +48,7 @@ final class BIP39Tests: XCTestCase {
         let corruptedIdx = (lastIdx & ~0xF) | ((lastIdx & 0xF) ^ 0x1)
         m[m.count - 1] = "w\(corruptedIdx)"
         XCTAssertThrowsError(try bip39.validate(mnemonic: m)) { error in
-            guard case CryptoError.invalidMnemonic = error else { return XCTFail("wrong error") }
+            guard case CatchlightCore.CryptoError.invalidMnemonic = error else { return XCTFail("wrong error") }
         }
     }
 

@@ -18,7 +18,11 @@
 //
 
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// A validated BIP-39 wordlist: exactly 2048 unique words.
 public struct BIP39Wordlist: Sendable {

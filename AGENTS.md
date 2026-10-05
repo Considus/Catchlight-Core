@@ -38,7 +38,17 @@ git config core.hooksPath hooks
 
 Core has no platform dependencies: Keychain, storage, file protection and the cloud folder are injected through protocols and implemented in each app. Keep it that way. No network code, ever (there is none today).
 
-No third-party dependencies without agreeing it first.
+No third-party dependencies without agreeing it first. The one agreed so far is `swift-crypto`, linked on Linux only (`linuxCrypto` in `Package.swift`). Every file that needs crypto imports it as:
+
+```swift
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+```
+
+so Apple builds link CryptoKit and never swift-crypto. Under `import Crypto`, swift-crypto's `CryptoError` clashes with Core's own, so code outside the `CatchlightCore` module (tests, `coreverify`) writes `CatchlightCore.CryptoError`.
 
 ## Prove
 
@@ -49,7 +59,9 @@ swift run   --scratch-path "$BUILD_DIR/spm" coreverify   # must pass before any 
 swift test  --scratch-path "$BUILD_DIR/spm"
 ```
 
-Read the test count, never the word "passed". CI also runs the suite on the iOS simulator (`xcodebuild test -scheme CatchlightCore-Package`), oldest and newest runtimes.
+Read the test count, never the word "passed". CI also runs the suite on the iOS simulator (`xcodebuild test -scheme CatchlightCore-Package`), oldest and newest runtimes, and on Linux in the official Swift image (`linux-tests`), where the same known-answer vectors run against swift-crypto. The macOS and Linux `Executed N tests` lines should match.
+
+To exercise the swift-crypto (BoringSSL) path on a Mac without Linux, copy the package to a scratch folder, point it at a local swift-crypto checkout with `let development = true` in that checkout's `Package.swift`, drop the platform condition from `linuxCrypto`, and replace the guarded imports with `import Crypto`. Never commit that setup.
 
 **An expected value comes from outside the code under test**: a known-good literal, a worked example, the spec, or a captured fixture. Tests live at public seams, not internals.
 

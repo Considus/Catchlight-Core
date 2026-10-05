@@ -20,7 +20,11 @@
 //
 
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// Written by the NEW device to `catchlight-device-request-{uuid}.json`.
 public struct HandshakeRequest: Codable, Equatable, Sendable {

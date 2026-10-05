@@ -12,7 +12,11 @@
 //
 
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import CatchlightCore
 
 // MARK: - Tiny harness
@@ -94,7 +98,7 @@ do {
     let c2 = try encryptTake(pt, masterKey: masterKey, takeUUID: uuid)
     check("Fresh nonce per encryption → different ciphertext", c1 != c2)
     var tampered = c1; tampered[tampered.count - 1] ^= 0xFF
-    checkThrows("Tampered ciphertext throws AEAD auth error", CryptoError.authenticationFailed) {
+    checkThrows("Tampered ciphertext throws AEAD auth error", CatchlightCore.CryptoError.authenticationFailed) {
         _ = try decryptTake(tampered, masterKey: masterKey, takeUUID: uuid)
     }
     checkThrows("Wrong UUID fails to decrypt") { _ = try decryptTake(c1, masterKey: masterKey, takeUUID: UUID()) }
@@ -202,7 +206,7 @@ do {
     checkNoThrow("within expiry accepted") {
         _ = try DeviceHandshake.unwrapMasterKey(response: resp2, ephemeralPrivate: priv2, now: issued.addingTimeInterval(14*60))
     }
-    checkThrows("attacker's private key cannot unwrap (OTV alone useless)", CryptoError.authenticationFailed) {
+    checkThrows("attacker's private key cannot unwrap (OTV alone useless)", CatchlightCore.CryptoError.authenticationFailed) {
         _ = try DeviceHandshake.unwrapMasterKey(response: resp, ephemeralPrivate: Curve25519.KeyAgreement.PrivateKey())
     }
     let folder = InMemoryCloudFolder()

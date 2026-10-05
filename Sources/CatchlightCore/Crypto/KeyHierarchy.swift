@@ -22,7 +22,11 @@
 //
 
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 public enum KeyInfo {
     public static let databaseKey     = "catchlight-sqlcipher-db-v1"
