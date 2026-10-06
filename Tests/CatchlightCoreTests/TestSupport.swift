@@ -23,9 +23,10 @@ extension TestFixtures {
         cloud: CloudFolder?,
         keys: KeyHierarchy,
         deviceId: UUID = UUID(),
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        holdsScripts: Bool = false
     ) -> SyncEngine {
-        SyncEngine(store: store, cloud: cloud, keys: keys, deviceId: deviceId, now: now)
+        SyncEngine(store: store, cloud: cloud, keys: keys, deviceId: deviceId, now: now, holdsScripts: holdsScripts)
     }
 
     /// A deterministic synthetic 2048-word "wordlist" to exercise the BIP-39
