@@ -17,12 +17,18 @@
 //  is reserved so the audio-recording widget/intent is a drop-in later (it adds
 //  a case, not a new pipe). Routing never hard-codes "text".
 //
-//  PRIVACY: nothing here touches the encrypted store or any key material. The
-//  hand-off carries only a capture MODE and, for the Siri/Shortcuts text path,
-//  the text the user themselves just dictated/typed — never existing content.
+//  PRIVACY: nothing here touches the encrypted store. The hand-off carries only a
+//  capture MODE and, for the share sheet and Siri, the text the user themselves just
+//  shared or dictated — never existing content — and that text is queued SEALED to
+//  the capture inbox's public key (R7, `CaptureInbox`), never in the clear.
 //
 
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
 
 public enum CaptureRouting {
 
@@ -135,6 +141,10 @@ public enum CaptureRouting {
     /// the keys it read. The zero-padded time prefix makes key order queue order.
     private static let sharedKeyPrefix = "capture.shared."
 
+    /// The capture inbox's PUBLIC key (`CaptureInbox`), published by the app at each unlock.
+    /// Not secret: it only lets a writer seal, never open.
+    private static let inboxPublicKeyKey = "capture.inboxPublicKey"
+
     /// How many shared items the queue holds before it starts dropping the OLDEST.
     ///
     /// The queue only drains when the app is opened AND unlocked, so an unbounded one would
@@ -147,8 +157,9 @@ public enum CaptureRouting {
     /// (owner 2026-08-11 — the sheet gained Obie / Important / Task toggles, so the shaping has
     /// to survive the hand-off, not just the text).
     ///
-    /// Encoded as JSON. Decoding falls back to treating a bare string as plain text, so an
-    /// item queued by an older build still lands rather than being dropped as unparseable.
+    /// Encoded as JSON, then sealed. Decoding an UNSEALED value falls back to treating a bare
+    /// string as plain text, so an item queued by an older build still lands rather than being
+    /// dropped as unparseable.
     public struct SharedItem: Codable, Equatable, Sendable {
         public var text: String
         /// Capture it as the Obie. Set by the Siri "New Obie" capture, NOT by the share sheet —
@@ -172,7 +183,38 @@ public enum CaptureRouting {
         var legacyRaw: String? = nil
     }
 
-    /// Append a shared item for the app to turn into a Take on next open.
+    /// A queued value that is sealed but would not open: sealed to an inbox this account no
+    /// longer holds (the account was erased or replaced since), or damaged. Its content is
+    /// gone for good, so the app tells the user and clears it (`clearShared(_:)`).
+    public struct UnopenableEntry: Equatable, Sendable {
+        let storageKey: String
+    }
+
+    // MARK: Inbox key
+
+    /// Publish the inbox's public key so writers can seal to it. The app calls this at each
+    /// unlock, so the key always belongs to the account that will open what is queued.
+    public static func publishInboxKey(_ publicKey: Data,
+                                       defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
+        defaults?.set(publicKey.base64EncodedString(), forKey: inboxPublicKeyKey)
+    }
+
+    /// Withdraw the inbox key (Erase everything, Second device). Captures made before the next
+    /// account is set up are then refused, not sealed to a key nobody will hold.
+    public static func clearInboxKey(defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
+        defaults?.removeObject(forKey: inboxPublicKeyKey)
+    }
+
+    static func inboxPublicKey(defaults: UserDefaults) -> Data? {
+        defaults.string(forKey: inboxPublicKeyKey).flatMap { Data(base64Encoded: $0) }
+    }
+
+    // MARK: Writing
+
+    /// Append a shared item for the app to turn into a Take on next open. Returns false when
+    /// nothing was queued: empty text, no App Group, no inbox key yet (Catchlight hasn't been
+    /// set up, or the account was just erased), or an OS without HPKE (macOS before 14; every
+    /// iPhone build has it). The caller tells the user to open Catchlight.
     ///
     /// A QUEUE, deliberately, where the widget hand-off above is a single slot. A launcher
     /// widget is idempotent — tapping it twice should not make two blank Takes, so last-wins is
@@ -180,66 +222,92 @@ public enum CaptureRouting {
     /// user expects to keep, and share-three-articles-then-open-the-app is ordinary behaviour.
     /// Reusing `setPending` would have silently kept only the last one.
     ///
-    /// Runs in the SHARE EXTENSION's process, so it never touches the encrypted store: the
-    /// master key is `.userPresence`-gated and only materialises in the foreground app, which
-    /// is why the extension queues rather than saves.
+    /// Runs in the SHARE EXTENSION's process, or in a Siri intent on a locked phone, so it never
+    /// touches the encrypted store: the master key is `.userPresence`-gated and only
+    /// materialises in the foreground app, which is why the writer queues rather than saves.
+    /// What it queues is SEALED to the inbox's public key (R7, `CaptureInbox`), so the text is
+    /// never written in the clear; only the app, unlocked, can open it.
+    @discardableResult
     public static func enqueueShared(_ item: SharedItem,
                                      defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite),
-                                     now: Date = Date()) {
+                                     now: Date = Date()) -> Bool {
         var item = item
         item.text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let defaults, !item.text.isEmpty,
-              let encoded = try? PlatformJSON.encode(item) else { return }
+              let publicKey = inboxPublicKey(defaults: defaults),
+              let encoded = try? PlatformJSON.encode(item),
+              let sealed = try? CaptureInbox.seal(encoded, to: publicKey) else { return false }
         // Never earlier than a key already queued, so a share always sorts after the ones
         // before it even when the device clock has moved back (a manual change or an NTP
         // correction). The count-based clear and the cap both rely on that order. Reading the
         // existing keys here writes nothing back, so it adds no race.
-        let newest = sharedQueueEntries(defaults: defaults).compactMap { $0.storageKey.flatMap(millis(fromKey:)) }.max()
+        let newest = queuedKeys(defaults: defaults).compactMap(millis(fromKey:)).max()
         let clock = max(0, Int64((now.timeIntervalSince1970 * 1000).rounded(.down)))
         let stamp = String(max(clock, (newest ?? -1) + 1))
         let key = sharedKeyPrefix + String(repeating: "0", count: max(0, 15 - stamp.count)) + stamp
             + "." + UUID().uuidString
-        defaults.set(String(decoding: encoded, as: UTF8.self), forKey: key)
+        defaults.set(sealed, forKey: key)
 
         // Over the cap: drop the oldest. Removing a key another process already removed is
         // harmless, so this needs no coordination either. Only per-key entries count and are
         // trimmed: trimming the legacy array would make this process a writer of it again,
         // racing the app's drain, and an older build already capped that array itself.
         // The share just written is never trimmed, whatever its key sorts as.
-        let keyed = sharedQueueEntries(defaults: defaults).filter { $0.storageKey != nil }
+        let keyed = queuedKeys(defaults: defaults)
         if keyed.count > sharedQueueCap {
-            let older = keyed.filter { $0.storageKey != key }
-            clearShared(Array(older.prefix(keyed.count - sharedQueueCap)), defaults: defaults)
+            let older = keyed.filter { $0 != key }
+            for old in older.prefix(keyed.count - sharedQueueCap) { defaults.removeObject(forKey: old) }
         }
+        return true
     }
 
     /// Convenience for a plain text/link share with no shaping.
+    @discardableResult
     public static func enqueueShared(_ text: String,
-                                     defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
+                                     defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> Bool {
         enqueueShared(SharedItem(text: text), defaults: defaults)
     }
+
+    // MARK: Reading
 
     /// Read the queued items, oldest first, WITHOUT consuming them. The app drops them with
     /// `clearShared(_:)` only once the Takes are safely written, so a crash or a failed save
     /// between the two does not lose the user's content.
-    public static func sharedQueueEntries(defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> [SharedEntry] {
+    ///
+    /// Sealed items open with `inbox`, the private key only the unlocked app can derive
+    /// (`KeyHierarchy.captureInboxPrivateKey()`). Without it, or when one won't open, a sealed
+    /// item is left out, never handed back as text: `unopenableSharedEntries` lists those.
+    /// Unsealed items, which only an older build wrote, read as before.
+    public static func sharedQueueEntries(opening inbox: Curve25519.KeyAgreement.PrivateKey? = nil,
+                                          defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> [SharedEntry] {
         guard let defaults else { return [] }
         let legacy = (defaults.stringArray(forKey: legacySharedQueueKey) ?? [])
-            .map { SharedEntry(item: decodeShared($0), storageKey: nil, legacyRaw: $0) }
-        let keyed = defaults.dictionaryRepresentation()
-            .compactMap { key, value -> (String, String)? in
-                guard key.hasPrefix(sharedKeyPrefix), let raw = value as? String else { return nil }
-                return (key, raw)
-            }
-            .sorted { $0.0 < $1.0 }
-            .map { SharedEntry(item: decodeShared($0.1), storageKey: $0.0) }
+            .map { SharedEntry(item: decodeUnsealed($0), storageKey: nil, legacyRaw: $0) }
+        let keyed = keyedValues(defaults: defaults).compactMap { key, raw -> SharedEntry? in
+            guard CaptureInbox.isSealed(raw) else { return SharedEntry(item: decodeUnsealed(raw), storageKey: key) }
+            guard let inbox, let item = open(raw, with: inbox) else { return nil }
+            return SharedEntry(item: item, storageKey: key)
+        }
         return legacy + keyed
     }
 
-    /// The queued items alone, oldest first.
-    public static func sharedQueue(defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> [SharedItem] {
-        sharedQueueEntries(defaults: defaults).map(\.item)
+    /// The queued items alone, oldest first. Sealed items open with `inbox`, as above.
+    public static func sharedQueue(opening inbox: Curve25519.KeyAgreement.PrivateKey? = nil,
+                                   defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> [SharedItem] {
+        sharedQueueEntries(opening: inbox, defaults: defaults).map(\.item)
     }
+
+    /// Sealed items `inbox` cannot open. Nothing can open them, so the app reports how many
+    /// were lost and clears them.
+    public static func unopenableSharedEntries(opening inbox: Curve25519.KeyAgreement.PrivateKey,
+                                               defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) -> [UnopenableEntry] {
+        guard let defaults else { return [] }
+        return keyedValues(defaults: defaults)
+            .filter { CaptureInbox.isSealed($0.1) && open($0.1, with: inbox) == nil }
+            .map { UnopenableEntry(storageKey: $0.0) }
+    }
+
+    // MARK: Clearing
 
     /// Drop exactly these entries, which the app has now committed. A share that arrived
     /// after they were read has its own key and is left alone.
@@ -265,15 +333,43 @@ public enum CaptureRouting {
         }
     }
 
+    /// Drop sealed entries that will never open.
+    public static func clearShared(_ entries: [UnopenableEntry],
+                                   defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
+        for entry in entries { defaults?.removeObject(forKey: entry.storageKey) }
+    }
+
     /// Drop the first `consumed` items in queue order. Kept for callers that predate
     /// `clearShared(_:)`. A share that arrives mid-drain sorts after the ones read (enqueue
     /// never writes a key earlier than one already queued), so it is left alone. Two cases
     /// remain that only `clearShared(_:)` closes: the cap trimming the queue between the read
     /// and this call, and two extension processes enqueueing in the same instant as the read.
+    /// Order counts every queued value, sealed or not, so a caller that read without the inbox
+    /// key would count fewer items than this removes: use `clearShared(_:)` with sealed queues.
     public static func clearSharedQueue(consumed: Int,
                                         defaults: UserDefaults? = UserDefaults(suiteName: appGroupSuite)) {
-        guard consumed > 0 else { return }
-        clearShared(Array(sharedQueueEntries(defaults: defaults).prefix(consumed)), defaults: defaults)
+        guard consumed > 0, let defaults else { return }
+        let legacy = (defaults.stringArray(forKey: legacySharedQueueKey) ?? [])
+            .map { SharedEntry(item: decodeUnsealed($0), storageKey: nil, legacyRaw: $0) }
+        let keyed = queuedKeys(defaults: defaults)
+            .map { SharedEntry(item: SharedItem(text: ""), storageKey: $0) }
+        clearShared(Array((legacy + keyed).prefix(consumed)), defaults: defaults)
+    }
+
+    // MARK: Helpers
+
+    /// Every per-key value, oldest first.
+    private static func keyedValues(defaults: UserDefaults) -> [(String, String)] {
+        defaults.dictionaryRepresentation()
+            .compactMap { key, value -> (String, String)? in
+                guard key.hasPrefix(sharedKeyPrefix), let raw = value as? String else { return nil }
+                return (key, raw)
+            }
+            .sorted { $0.0 < $1.0 }
+    }
+
+    private static func queuedKeys(defaults: UserDefaults) -> [String] {
+        keyedValues(defaults: defaults).map(\.0)
     }
 
     /// The time prefix of a per-key share, or nil for any other key.
@@ -282,9 +378,15 @@ public enum CaptureRouting {
         return Int64(rest.prefix { $0 != "." })
     }
 
+    private static func open(_ sealed: String, with inbox: Curve25519.KeyAgreement.PrivateKey) -> SharedItem? {
+        guard let json = try? CaptureInbox.open(sealed, with: inbox) else { return nil }
+        return try? PlatformJSON.decode(SharedItem.self, from: json)
+    }
+
     /// Tolerant on purpose: anything that isn't our JSON is treated as plain text, so a
     /// share queued by an older build lands as a Take instead of being silently dropped.
-    private static func decodeShared(_ raw: String) -> SharedItem {
+    /// Never called on a sealed value, which would otherwise land as a Take of base64.
+    private static func decodeUnsealed(_ raw: String) -> SharedItem {
         (try? PlatformJSON.decode(SharedItem.self, from: Data(raw.utf8))) ?? SharedItem(text: raw)
     }
 }

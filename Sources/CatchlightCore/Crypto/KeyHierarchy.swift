@@ -16,6 +16,9 @@
 //      Master Key (32 bytes, from HKDF(mnemonic), Keychain-only)
 //        ├── HKDF info "catchlight-sqlcipher-db-v1"  → DB Key (SQLCipher)
 //        ├── HKDF info "catchlight-manifest-hmac-v1" → Manifest HMAC Key
+//        ├── HKDF info "catchlight-capture-inbox-v1" → Capture inbox X25519 key
+//        │                                             (CaptureInbox.swift; only its
+//        │                                              public half is ever stored)
 //        └── HKDF salt "catchlight-item-key",
 //            info <take.uuidString>                  → Per-Item AES-256-GCM key
 //                                                     (ephemeral; never stored)
