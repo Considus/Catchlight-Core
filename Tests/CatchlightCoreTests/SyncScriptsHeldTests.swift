@@ -190,4 +190,147 @@ final class SyncScriptsHeldTests: XCTestCase {
         XCTAssertEqual(try entry(take.id)?.kind, "storyboard", "the newer client's kind stands, as on the phone")
     }
 
+    /// A device that doesn't hold Scripts never uploads one it finds in its own store (the Mac,
+    /// with Scripts in its library and the switch off). Uploading it would write a Take entry,
+    /// and the phone would show the Script as a Take.
+    func testADeviceThatDoesNotHoldScriptsNeverUploadsItsOwn() throws {
+        let mac = Device(holdsScripts: false), phone = Device(holdsScripts: false)
+        let s = script("Mac only", at: t0)
+        try mac.store.upsert(s)
+
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(1)).uploaded, [], "first pass: every local item is new")
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(2)).uploaded, [], "later pass: the self-heal step")
+        XCTAssertNil(try entry(s.id))
+        XCTAssertNil(try cloud.read("\(s.id.uuidString).clk"))
+        try sync(phone, at: t0.addingTimeInterval(3))
+        XCTAssertNil(try phone.store.take(id: s.id))
+        XCTAssertTrue(try XCTUnwrap(try mac.store.take(id: s.id)).isScript, "and the Mac keeps it")
+    }
+
+    /// A Take made a Script on such a device stays a Take in the folder, as it was: the change of
+    /// kind can't be sent, and sending the Script's text as the Take's would show it on the phone.
+    func testATakeMadeAScriptWhereScriptsAreNotHeldStaysAsItWasInTheFolder() throws {
+        let mac = Device(holdsScripts: false), phone = Device(holdsScripts: false)
+        var take = Take(createdAt: t0, modifiedAt: t0, blocks: [.text(TextBlock(text: "Captured"))])
+        try mac.store.upsert(take)
+        try sync(mac, at: t0.addingTimeInterval(1))
+        try sync(phone, at: t0.addingTimeInterval(2))
+
+        take.kind = ManifestEntry.Kind.script
+        take.blocks = [.text(TextBlock(text: "# Captured, expanded into a Script"))]
+        take.modifiedAt = t0.addingTimeInterval(10)
+        try mac.store.upsert(take)
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(11)).uploaded, [])
+        XCTAssertNil(try entry(take.id)?.kind)
+        let fresh = Device(holdsScripts: false)
+        try sync(fresh, at: t0.addingTimeInterval(12))
+        XCTAssertEqual(try fresh.store.take(id: take.id)?.plainText, "Captured")
+        // The Take and the Script now differ for good; with no change to the Take, no conflict.
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(13)).conflicts.count, 0)
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(14)).conflicts.count, 0)
+    }
+
+    /// Local review: the phone still shows the Take a non-holding device made a Script. Deleting
+    /// it there deletes the Take only; the Script stays (D-325).
+    func testDeletingTheOldTakeElsewhereKeepsAScriptWhereScriptsAreNotHeld() throws {
+        let mac = Device(holdsScripts: false), phone = Device(holdsScripts: false)
+        var take = Take(createdAt: t0, modifiedAt: t0, blocks: [.text(TextBlock(text: "Captured"))])
+        try mac.store.upsert(take)
+        try sync(mac, at: t0.addingTimeInterval(1))
+        try sync(phone, at: t0.addingTimeInterval(2))
+        take.kind = ManifestEntry.Kind.script
+        take.modifiedAt = t0.addingTimeInterval(10)
+        try mac.store.upsert(take)
+        try sync(mac, at: t0.addingTimeInterval(11))
+
+        try phone.store.delete(id: take.id)
+        try sync(phone, at: t0.addingTimeInterval(20))
+        XCTAssertTrue(try XCTUnwrap(try sync(mac, at: t0.addingTimeInterval(21))).deletedLocally.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(try mac.store.take(id: take.id)).isScript)
+    }
+
+    /// Local review: an edit to the old Take from elsewhere never replaces the Script it became
+    /// on a non-holding device. Both changed, so it is a conflict for the user to settle.
+    func testAnEditToTheOldTakeElsewhereIsAConflictWithTheScript() throws {
+        let mac = Device(holdsScripts: false), phone = Device(holdsScripts: false)
+        var take = Take(createdAt: t0, modifiedAt: t0, blocks: [.text(TextBlock(text: "Captured"))])
+        try mac.store.upsert(take)
+        try sync(mac, at: t0.addingTimeInterval(1))
+        try sync(phone, at: t0.addingTimeInterval(2))
+        take.kind = ManifestEntry.Kind.script
+        take.blocks = [.text(TextBlock(text: "# Captured, as a Script"))]
+        take.modifiedAt = t0.addingTimeInterval(10)
+        try mac.store.upsert(take)
+        try sync(mac, at: t0.addingTimeInterval(11))   // the Script is now older than the last sync
+
+        var onPhone = try XCTUnwrap(try phone.store.take(id: take.id))
+        onPhone.blocks = [.text(TextBlock(text: "Captured, edited on the phone"))]
+        onPhone.modifiedAt = t0.addingTimeInterval(20)
+        try phone.store.upsert(onPhone)
+        try sync(phone, at: t0.addingTimeInterval(21))
+
+        let report = try sync(mac, at: t0.addingTimeInterval(22))
+        XCTAssertEqual(report.conflicts.map(\.local.id), [take.id])
+        XCTAssertEqual(report.conflicts.first?.remote.plainText, "Captured, edited on the phone")
+        let kept = try XCTUnwrap(try mac.store.take(id: take.id))
+        XCTAssertTrue(kept.isScript)
+        XCTAssertEqual(kept.plainText, "# Captured, as a Script")
+    }
+
+    /// Greptile on #22: the Take deleted elsewhere, then made a Script here before this device
+    /// pulled. The Script stays, and the deletion record must stay in the folder too, or a device
+    /// still holding the old Take would upload it again.
+    func testADeletionRecordStaysWhenTheTakeBecameAScriptHere() throws {
+        let mac = Device(holdsScripts: false), phone = Device(holdsScripts: false), stale = Device(holdsScripts: false)
+        var take = Take(createdAt: t0, modifiedAt: t0, blocks: [.text(TextBlock(text: "Captured"))])
+        try phone.store.upsert(take)
+        try sync(phone, at: t0.addingTimeInterval(1))
+        try sync(mac, at: t0.addingTimeInterval(2))
+        try sync(stale, at: t0.addingTimeInterval(3))
+
+        try phone.store.delete(id: take.id)
+        try sync(phone, at: t0.addingTimeInterval(10))
+        take.kind = ManifestEntry.Kind.script
+        take.modifiedAt = Date().addingTimeInterval(60)   // after the deletion, which the store stamps with the clock
+        try mac.store.upsert(take)
+        try sync(mac, at: t0.addingTimeInterval(12))
+
+        XCTAssertTrue(try XCTUnwrap(try mac.store.take(id: take.id)).isScript)
+        XCTAssertEqual(try Manifest.readEncrypted(from: cloud, keys: keys).tombstones.map(\.uuid), [take.id])
+        try sync(stale, at: t0.addingTimeInterval(13))
+        XCTAssertNil(try stale.store.take(id: take.id))
+        XCTAssertNil(try entry(take.id))
+    }
+
+    /// Greptile on #22: keeping the Script must settle the conflict, though the Script is never
+    /// uploaded. The Take and the Script differ for good, so only a change to the Take since the
+    /// last sync is reported, and only by the pass that finds it.
+    func testKeepingTheScriptSettlesTheConflict() throws {
+        let mac = Device(holdsScripts: false), phone = Device(holdsScripts: false)
+        var take = Take(createdAt: t0, modifiedAt: t0, blocks: [.text(TextBlock(text: "Captured"))])
+        try mac.store.upsert(take)
+        try sync(mac, at: t0.addingTimeInterval(1))
+        try sync(phone, at: t0.addingTimeInterval(2))
+        take.kind = ManifestEntry.Kind.script
+        take.modifiedAt = t0.addingTimeInterval(10)
+        try mac.store.upsert(take)
+        try sync(mac, at: t0.addingTimeInterval(11))
+        var onPhone = try XCTUnwrap(try phone.store.take(id: take.id))
+        onPhone.blocks = [.text(TextBlock(text: "Edited on the phone"))]
+        onPhone.modifiedAt = t0.addingTimeInterval(20)
+        try phone.store.upsert(onPhone)
+        try sync(phone, at: t0.addingTimeInterval(21))
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(22)).conflicts.count, 1)
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(23)).conflicts.count, 0, "reported once, chosen or not")
+
+        // The user keeps the Script: stamped as a fresh edit, as the apps resolve a conflict.
+        take = try XCTUnwrap(try mac.store.take(id: take.id))
+        take.modifiedAt = t0.addingTimeInterval(30)
+        try mac.store.upsert(take)
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(31)).conflicts.count, 0)
+        XCTAssertEqual(try sync(mac, at: t0.addingTimeInterval(32)).conflicts.count, 0)
+        XCTAssertTrue(try XCTUnwrap(try mac.store.take(id: take.id)).isScript)
+        XCTAssertEqual(try phone.store.take(id: take.id)?.plainText, "Edited on the phone", "the phone keeps its Take")
+    }
+
 }
