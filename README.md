@@ -1,6 +1,8 @@
 # Catchlight Core
 
-This is the part of Catchlight that has to behave exactly the same on every device: the encryption, the format your Takes are saved in, and the sync engine that moves them between your iPhone and your Mac. The apps live in their own repos, [Catchlight-iOS](https://github.com/Considus/Catchlight-iOS) and [Catchlight-MacOS](https://github.com/Considus/Catchlight-MacOS), and both build against this package.
+Catchlight is a notes, tasks and reminders app for iPhone, with a Mac app on the way. Catchlight calls what you write a Take, and each one is encrypted on your phone with a key only you hold. There's no account to make and no server of mine, and the app has no analytics in it, so there's nowhere your Takes could sit where I'd be able to read them. It's coming to the App Store soon, and [catchlight.app](https://catchlight.app) has the rest.
+
+This repo is the part of Catchlight that has to behave exactly the same on every device: the encryption, the format your Takes are saved in, and the sync engine that moves them between your iPhone and your Mac. The apps live in their own repos, [Catchlight-iOS](https://github.com/Considus/Catchlight-iOS) and [Catchlight-MacOS](https://github.com/Considus/Catchlight-MacOS), and both build against this package. The Mac keeps its encrypted database in [Catchlight-AppleStorage](https://github.com/Considus/Catchlight-AppleStorage).
 
 It's public so you can check it. Catchlight rests on one promise, that you hold the key to your Takes and nobody else does, me included, and a promise like that is only worth something if you can read the code that keeps it.
 
@@ -58,6 +60,14 @@ Beyond that:
 - Encryption is always on. It's never optional, and there's no switch for it.
 - Everything works offline. Sync is something extra, and running with no cloud folder at all is a proper way to use Catchlight.
 - The cloud folder holds encrypted JSON files and one plain-text metadata file, and nothing else.
+
+## Can I check the App Store build?
+
+Not directly, and I'd rather tell you here than have you find out in a comment thread. Apple doesn't give anyone a way to prove that the app on your phone was built from a particular commit. That's true of every app on the store, mine included, and nothing I write here changes it.
+
+You can check everything either side of that gap, though. Each app pins Core to an exact release tag in its `project.yml`, so for any commit since Core moved into its own repo, you can see which release it was built against, and read that release here. When Catchlight ships, each App Store release will be tagged in its app's repo with the same version number, so the release and its code are one click apart.
+
+And if you'd rather not take any of that on trust, which is fair enough, build it yourself. The [Catchlight-iOS](https://github.com/Considus/Catchlight-iOS) README says how. You'll need Xcode, an Apple developer account, and your own team set in `project.yml` in place of mine. It's still Apple's compiler doing the work, of course, but it's as close as an iPhone app lets you get to not taking my word for it.
 
 ## Licence
 
