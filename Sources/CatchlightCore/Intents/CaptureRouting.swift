@@ -212,8 +212,9 @@ public enum CaptureRouting {
     // MARK: Writing
 
     /// Append a shared item for the app to turn into a Take on next open. Returns false when
-    /// nothing was queued: empty text, no App Group, or no inbox key yet (Catchlight hasn't been
-    /// set up, or the account was just erased). The caller tells the user to open Catchlight.
+    /// nothing was queued: empty text, no App Group, no inbox key yet (Catchlight hasn't been
+    /// set up, or the account was just erased), or an OS without HPKE (macOS before 14; every
+    /// iPhone build has it). The caller tells the user to open Catchlight.
     ///
     /// A QUEUE, deliberately, where the widget hand-off above is a single slot. A launcher
     /// widget is idempotent — tapping it twice should not make two blank Takes, so last-wins is
