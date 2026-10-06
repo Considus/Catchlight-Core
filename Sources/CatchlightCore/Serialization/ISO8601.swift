@@ -37,6 +37,10 @@ public enum ISO8601 {
     }
 
     public static func date(from string: String) -> Date? {
+        // Every timestamp this accepts is ASCII, so anything else is nil without reaching
+        // DateFormatter: on Linux and Windows, Foundation traps instead of returning nil
+        // when a digit is followed by a combining mark ("2\u{301}"). Found by Fuzz/.
+        guard string.utf8.allSatisfy({ $0 < 0x80 }) else { return nil }
         if let d = formatter.date(from: string) { return d }
         return lenientDate(from: string)
     }
