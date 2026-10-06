@@ -205,7 +205,7 @@ public final class SyncEngine {
         // 1. Upload changed Takes. Blob HMACs are computed from the bytes in
         //    hand — no read-back.
         let changed = try store.takesModified(since: lastSync)
-        for take in changed {
+        for take in changed where holds(take) {
             if isCancelled() { throw CancellationError() }
             // A Take waiting for the user's choice keeps whatever the cloud holds. Uploading
             // here would replace the other device's version before the user has picked one.
@@ -310,7 +310,7 @@ public final class SyncEngine {
         //    because an unmatched Take may have been deleted fleet-wide with its tombstone
         //    since pruned — but an entry that EXISTS is proof the fleet still lists the Take,
         //    so there is no deletion to resurrect and nothing to hold back for.
-        for take in localTakes where !tombstonedIds.contains(take.id) {
+        for take in localTakes where !tombstonedIds.contains(take.id) && holds(take) {
             if isCancelled() { throw CancellationError() }
             if let entry = entries[take.id] {
                 if heldIDs.contains(take.id), entriesBeforePush[take.id].map(holds) != false { continue }   // as step 1
@@ -420,6 +420,15 @@ public final class SyncEngine {
         entry.isTake || (holdsScripts && entry.kind == ManifestEntry.Kind.script)
     }
 
+    /// The same question of an item in this device's own store. A device that doesn't hold
+    /// Scripts can still have one locally (the desktop, with Scripts in its library before they
+    /// sync), and never uploads it: the entry would be a Take's, so the phone would show the
+    /// Script as a Take. A Take made a Script there stays in the folder as it was. Any other
+    /// kind in the store is the app's own (a newer client's) and syncs as before.
+    func holds(_ take: Take) -> Bool {
+        holdsScripts || !take.isScript
+    }
+
     /// True when a non-Take entry may hold another device's edit this one has not seen: it was
     /// written after our last sync, or there is no last sync to compare with, or its stamp does
     /// not parse. Uploading over such an entry would discard that edit (D-315).
@@ -522,7 +531,9 @@ public final class SyncEngine {
         for t in manifest.tombstones where !scriptIds.contains(t.uuid) {
             if isCancelled() { throw CancellationError() }
             let deletedAt = ISO8601.date(from: t.deletedAt) ?? .distantPast
-            if let local = try store.take(id: t.uuid), local.modifiedAt <= deletedAt {
+            // A Take this device made a Script, where Scripts aren't held, was never sent as a
+            // Script; the deletion of the Take it was leaves the Script alone (D-325).
+            if let local = try store.take(id: t.uuid), holds(local), local.modifiedAt <= deletedAt {
                 try store.delete(id: t.uuid)
                 // (The delete just recorded a fresh local tombstone; the purge
                 // below removes it — the manifest already carries the record.)
@@ -629,6 +640,10 @@ public final class SyncEngine {
                 continue
             }
             switch ConflictResolver.decide(local: local, remote: remoteTake, lastSync: lastSync) {
+            case .takeRemote(let t) where local.map(holds) == false:
+                // The Take this device made a Script (where Scripts aren't held) changed
+                // elsewhere. Neither replaces the other: the user settles it, as any conflict.
+                report.conflicts.append((local: local!, remote: t))
             case .takeRemote(let t):
                 // RESURRECTION GUARD, part 2 (2026-07-23): the guard above consults
                 // `pendingTombstoneByID`, a snapshot taken at pull-start — a delete
