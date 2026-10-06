@@ -122,6 +122,9 @@ public final class SyncEngine {
     private let appVersion: String
     private let deviceId: UUID
     private let now: () -> Date
+    /// True on a device that keeps Scripts (the desktop, later the iPad); false on the phone,
+    /// which holds Takes only ([[D-315]]). See `holds(_:)`.
+    public let holdsScripts: Bool
 
     /// - Parameter deviceId: REQUIRED stable per-install identifier. (Previously
     ///   defaulted to `UUID()`, which gave every engine instance a fresh identity
@@ -134,7 +137,8 @@ public final class SyncEngine {
         schemaVersion: Int = 1,
         appVersion: String = "1.0.0",
         deviceId: UUID,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        holdsScripts: Bool = false
     ) {
         self.store = store
         self.cloud = cloud
@@ -145,6 +149,7 @@ public final class SyncEngine {
         self.appVersion = appVersion
         self.deviceId = deviceId
         self.now = now
+        self.holdsScripts = holdsScripts
     }
 
     public var isLocalOnly: Bool { cloud == nil }
@@ -205,10 +210,10 @@ public final class SyncEngine {
             // A Take waiting for the user's choice keeps whatever the cloud holds. Uploading
             // here would replace the other device's version before the user has picked one.
             // Once that version has become a Script, the D-315 fork below applies instead.
-            if heldIDs.contains(take.id), entriesBeforePush[take.id]?.isTake != false { continue }
-            // Never upload over a Script holding an edit this device has not seen (D-315):
-            // keep this edit as a new Take instead, uploaded now.
-            if let e = entriesBeforePush[take.id], Self.changedElsewhere(e, since: lastSync) {
+            if heldIDs.contains(take.id), entriesBeforePush[take.id].map(holds) != false { continue }
+            // Never upload over an item this device can't hold (a Script, on the phone) that
+            // carries an edit it has not seen (D-315): keep this edit as a new Take instead.
+            if let e = entriesBeforePush[take.id], !holds(e), Self.changedElsewhere(e, since: lastSync) {
                 try forkAndUpload(take, to: cloud, entries: &entries, report: &report)
                 continue
             }
@@ -228,7 +233,7 @@ public final class SyncEngine {
         var deletionsOfScripts: [UUID] = []
         for ts in localTombstones {
             if isCancelled() { throw CancellationError() }
-            if let e = entriesBeforePush[ts.id], !e.isTake {
+            if let e = entriesBeforePush[ts.id], !holds(e) {
                 deletionsOfScripts.append(ts.id)
                 continue
             }
@@ -250,7 +255,8 @@ public final class SyncEngine {
         for (id, t) in mergedTombstones {
             // A deletion from anywhere never removes an entry that is no longer a Take
             // (D-325): the Script stays and the record goes.
-            if let e = entries[id], !e.isTake { continue }
+            // A device that holds Scripts deletes them like Takes.
+            if let e = entries[id], !holds(e) { continue }
             let deletedAt = ISO8601.date(from: t.deletedAt) ?? .distantPast
             if let local = localById[id], local.modifiedAt > deletedAt {
                 continue   // edited after deletion → the edit wins; entry stays
@@ -307,8 +313,8 @@ public final class SyncEngine {
         for take in localTakes where !tombstonedIds.contains(take.id) {
             if isCancelled() { throw CancellationError() }
             if let entry = entries[take.id] {
-                if heldIDs.contains(take.id), entriesBeforePush[take.id]?.isTake != false { continue }   // as step 1
-                if let before = entriesBeforePush[take.id],
+                if heldIDs.contains(take.id), entriesBeforePush[take.id].map(holds) != false { continue }   // as step 1
+                if let before = entriesBeforePush[take.id], !holds(before),
                    Self.changedElsewhere(before, since: lastSync) {   // D-315, as step 1
                     // Only an edit newer than the last sync needs keeping; anything older is
                     // superseded by the Script, and the next pull lets it go.
@@ -410,6 +416,13 @@ public final class SyncEngine {
     /// True when a non-Take entry may hold another device's edit this one has not seen: it was
     /// written after our last sync, or there is no last sync to compare with, or its stamp does
     /// not parse. Uploading over such an entry would discard that edit (D-315).
+    /// Whether this device keeps items of this entry's kind: every device keeps Takes, and a
+    /// device made with `holdsScripts` keeps Scripts as well, syncing them as it syncs Takes. A
+    /// kind from a newer client is never held, so it is carried forward untouched everywhere.
+    func holds(_ entry: ManifestEntry) -> Bool {
+        entry.isTake || (holdsScripts && entry.kind == ManifestEntry.Kind.script)
+    }
+
     static func changedElsewhere(_ entry: ManifestEntry, since lastSync: Date?) -> Bool {
         guard !entry.isTake else { return false }
         guard let lastSync, let modified = ISO8601.date(from: entry.modified) else { return true }
@@ -466,13 +479,16 @@ public final class SyncEngine {
         let blob = CloudBlob(take: take, sealed: sealed)
         let bytes = try blob.serialise()
         try cloud.write(bytes, to: CloudBlob.fileName(for: take.id))
-        // The entry's kind is kept (D-315): this device never turns a Script back into a
-        // Take by uploading over it.
+        // The phone keeps the entry's kind (D-315): it never turns a Script back into a Take by
+        // uploading over it. A device that holds Scripts writes the item's own kind, so turning
+        // a Take into a Script, or back, is a change of kind on the same id (D-313), but only
+        // over an entry of a kind it holds: a newer client's kind is kept, as on the phone.
+        let existing = entries[take.id]
         entries[take.id] = ManifestEntry(
             uuid: take.id,
             modified: ISO8601.string(from: take.modifiedAt),
             hmac: signer.blobHMACHex(bytes),
-            kind: entries[take.id]?.kind
+            kind: holdsScripts && existing.map(holds) != false ? take.kind : existing?.kind
         )
         report.uploaded.append(take.id)
     }
@@ -499,7 +515,7 @@ public final class SyncEngine {
         //    A deletion record never applies to an id the folder lists as a Script (D-325),
         //    as on push: the Script rules in step 3 decide what happens to the phone's copy,
         //    so an unsynced edit is forked rather than deleted.
-        let scriptIds = Set(manifest.takes.filter { !$0.isTake }.map(\.uuid))
+        let scriptIds = Set(manifest.takes.filter { !holds($0) }.map(\.uuid))
         let tombstonedIds = Set(manifest.tombstones.map(\.uuid)).subtracting(scriptIds)
         for t in manifest.tombstones where !scriptIds.contains(t.uuid) {
             if isCancelled() { throw CancellationError() }
@@ -554,7 +570,7 @@ public final class SyncEngine {
             //   • Both have changed: neither side's work may be lost, and the Script must not be
             //     read here. The phone's edit is kept as a NEW Take (`forkedFromScripts`), the
             //     original is let go, and the Script stays exactly as the other device left it.
-            if !entry.isTake {
+            if !holds(entry) {
                 if let lastSync, try store.release(id: entry.uuid, ifNotModifiedAfter: lastSync) {
                     report.deletedLocally.append(entry.uuid)
                     continue
