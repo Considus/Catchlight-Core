@@ -12,6 +12,8 @@ name: CI
 #                swift-corelibs-foundation in place of Apple's Foundation. The
 #                known-answer vectors in EncryptionLayerTests must hold on both, so
 #                compare its "Executed N tests" line with core-tests'.
+#   windows-tests — the same two commands on Windows with the swift.org toolchain,
+#                again on swift-crypto. Same count comparison.
 
 on:
   push:
@@ -68,6 +70,55 @@ jobs:
           key: linux-swift-6.2.4-spm-${{ hashFiles('Package.swift') }}
           restore-keys: |
             linux-swift-6.2.4-spm-
+
+      - name: swift test
+        run: swift test
+
+      - name: swift run coreverify
+        run: swift run coreverify
+
+  windows-tests:
+    name: Core on Windows (swift test + coreverify)
+    # windows-2022, not 2025: the 2025 image's Visual Studio 18 C++ library refuses any
+    # Clang older than 20 (error STL1000), and Swift 6.2.4 ships Clang 19. Move both
+    # together when the Swift version moves.
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Swift 6.2.4
+        # swift.org's installer, checked against a pinned SHA-256 before it runs (no
+        # third-party action: the repo allows only GitHub's own and verified ones). To
+        # move version, change both values together; the hash is `shasum -a 256` of
+        # the downloaded .exe.
+        shell: pwsh
+        env:
+          SWIFT_URL: https://download.swift.org/swift-6.2.4-release/windows10/swift-6.2.4-RELEASE/swift-6.2.4-RELEASE-windows10.exe
+          SWIFT_SHA256: 222501d4a0ef6ec3b2f08b3e0055140bb3a5136527542239bb925f979689f4ad
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'swift.exe'
+          Invoke-WebRequest -Uri $env:SWIFT_URL -OutFile $installer
+          $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLower()
+          if ($hash -ne $env:SWIFT_SHA256) { throw "Swift installer hash $hash does not match the pinned value" }
+          $p = Start-Process -FilePath $installer -ArgumentList '/quiet','/norestart','/log',(Join-Path $env:RUNNER_TEMP 'swift-install.log') -Wait -PassThru
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "Swift installer exited $($p.ExitCode)" }
+          # The installer writes PATH and SDKROOT to the registry, which this shell and
+          # later steps do not see; hand both on through GITHUB_PATH and GITHUB_ENV.
+          $before = $env:Path -split ';'
+          foreach ($level in 'Machine', 'User') {
+            $vars = [Environment]::GetEnvironmentVariables($level)
+            foreach ($entry in (($vars['Path'] ?? '') -split ';')) {
+              if ($entry -and $before -notcontains $entry) { $entry | Out-File $env:GITHUB_PATH -Append -Encoding utf8 }
+            }
+            foreach ($name in $vars.Keys) {
+              if ($name -ne 'Path' -and -not (Test-Path "Env:$name")) { "$name=$($vars[$name])" | Out-File $env:GITHUB_ENV -Append -Encoding utf8 }
+            }
+          }
+
+      - name: Swift version
+        run: swift --version
 
       - name: swift test
         run: swift test
