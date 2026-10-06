@@ -413,9 +413,6 @@ public final class SyncEngine {
         try cloud.writeAtomically(try envelope.serialise(), to: Manifest.fileName)
     }
 
-    /// True when a non-Take entry may hold another device's edit this one has not seen: it was
-    /// written after our last sync, or there is no last sync to compare with, or its stamp does
-    /// not parse. Uploading over such an entry would discard that edit (D-315).
     /// Whether this device keeps items of this entry's kind: every device keeps Takes, and a
     /// device made with `holdsScripts` keeps Scripts as well, syncing them as it syncs Takes. A
     /// kind from a newer client is never held, so it is carried forward untouched everywhere.
@@ -423,6 +420,11 @@ public final class SyncEngine {
         entry.isTake || (holdsScripts && entry.kind == ManifestEntry.Kind.script)
     }
 
+    /// True when a non-Take entry may hold another device's edit this one has not seen: it was
+    /// written after our last sync, or there is no last sync to compare with, or its stamp does
+    /// not parse. Uploading over such an entry would discard that edit (D-315).
+    /// Callers ask it only of an entry this device does not hold (`!holds(e)`); for a held
+    /// item the ordinary conflict check applies instead.
     static func changedElsewhere(_ entry: ManifestEntry, since lastSync: Date?) -> Bool {
         guard !entry.isTake else { return false }
         guard let lastSync, let modified = ISO8601.date(from: entry.modified) else { return true }
