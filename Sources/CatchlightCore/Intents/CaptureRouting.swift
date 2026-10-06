@@ -172,6 +172,15 @@ public enum CaptureRouting {
             self.text = text
             self.isObie = isObie
         }
+
+        /// `isObie` is optional on the way in. A capture that opens but carries only `text` (a
+        /// non-Apple writer, or a future field dropped) would otherwise fail to decode and be
+        /// counted as unopenable, then cleared: the text lost, for want of one flag.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            text = try c.decode(String.self, forKey: .text)
+            isObie = try c.decodeIfPresent(Bool.self, forKey: .isObie) ?? false
+        }
     }
 
     /// A queued item together with where it is stored, so a drain can remove exactly the
@@ -243,7 +252,8 @@ public enum CaptureRouting {
         // existing keys here writes nothing back, so it adds no race.
         let newest = queuedKeys(defaults: defaults).compactMap(millis(fromKey:)).max()
         let clock = max(0, Int64((now.timeIntervalSince1970 * 1000).rounded(.down)))
-        let stamp = String(max(clock, (newest ?? -1) + 1))
+        // Capped at 15 digits: a longer stamp would sort by its first digit, not its value.
+        let stamp = String(min(max(clock, (newest ?? -1) + 1), maxStamp))
         let key = sharedKeyPrefix + String(repeating: "0", count: max(0, 15 - stamp.count)) + stamp
             + "." + UUID().uuidString
         defaults.set(sealed, forKey: key)
@@ -372,10 +382,16 @@ public enum CaptureRouting {
         keyedValues(defaults: defaults).map(\.0)
     }
 
-    /// The time prefix of a per-key share, or nil for any other key.
+    /// The largest time prefix `enqueueShared` writes: 15 digits, year 33658.
+    private static let maxStamp: Int64 = 999_999_999_999_999
+
+    /// The time prefix of a per-key share, or nil for any key `enqueueShared` would not write.
+    /// Only exactly 15 ASCII digits count, so a planted `capture.shared.9223372036854775807.x`
+    /// can neither overflow the next stamp nor push it past 15 digits.
     private static func millis(fromKey key: String) -> Int64? {
-        let rest = key.dropFirst(sharedKeyPrefix.count)
-        return Int64(rest.prefix { $0 != "." })
+        let digits = key.dropFirst(sharedKeyPrefix.count).prefix { $0 != "." }
+        guard digits.count == 15, digits.allSatisfy({ $0.isASCII && $0.isWholeNumber }) else { return nil }
+        return Int64(digits)
     }
 
     private static func open(_ sealed: String, with inbox: Curve25519.KeyAgreement.PrivateKey) -> SharedItem? {

@@ -50,6 +50,47 @@ final class CaptureInboxTests: XCTestCase {
                        "c6d34261ef27f241361f06ba834a9e3577165a4485eadab37502328a3c422d7b")
     }
 
+    /// A capture sealed OUTSIDE Swift opens here, so a non-Apple writer can seal to the inbox.
+    ///
+    /// The sealed value was NOT made by this implementation. It comes from Python: pyhpke 0.6.5
+    /// and a separate plain RFC 9180 base-mode implementation over `cryptography`, both of which
+    /// first reproduced RFC 9180 Appendix A.1.1, and which produced identical bytes here.
+    ///   suite  DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM, mode_base, no AAD
+    ///   info   "catchlight-capture-inbox-hpke-v1"
+    ///   pkR    c6d34261ef27f241361f06ba834a9e3577165a4485eadab37502328a3c422d7b ("abandon … about")
+    ///   ikmE   000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f (DeriveKeyPair)
+    ///   enc    b1f1b840de7a3241b02748cf9b05b74dc8c5e8451298738817bd76aa8ebe8c2b
+    ///   ct     d05048b12843e06a5239094a1a2adbde2f0d65d503663bed52b6b42600f51801
+    ///          10241c9f940a61c9bd901d12727be68b76
+    func testOpensAValueSealedByAnIndependentHPKE_fixedVector() throws {
+        let words = ["abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+                     "abandon", "abandon", "abandon", "abandon", "abandon", "about"]
+        let keys = KeyHierarchy(masterKeyBytes: MasterKeyDerivation.deriveRaw(from: words))
+        let sealed = "sealed1:sfG4QN56MkGwJ0jPmwW3TcjF6EUSmHOIF712qo6+jCvQUEixKEPgalI5CUoaKtve"
+                   + "Lw1l1QNmO+1StrQmAPUYARAkHJ+UCmHJvZAdEnJ75ot2"
+
+        let opened = try CaptureInbox.open(sealed, with: keys.captureInboxPrivateKey())
+
+        XCTAssertEqual(String(decoding: opened, as: UTF8.self), #"{"text":"interop","isObie":false}"#)
+        XCTAssertEqual(try PlatformJSON.decode(CaptureRouting.SharedItem.self, from: opened),
+                       .init(text: "interop", isObie: false))
+    }
+
+    /// A capture carrying only `text` (no `isObie`) is a Take, not an unopenable entry to clear.
+    /// Before, the required flag failed the decode and the drain deleted the text.
+    func testCaptureWithoutIsObie_opensAsAPlainTake_sealedOrNot() throws {
+        let json = Data(#"{"text":"from another writer"}"#.utf8)
+        let sealed = try CaptureInbox.seal(json, to: keys.captureInboxPublicKey())
+        defaults.set(sealed, forKey: "capture.shared.000000000000001.\(UUID().uuidString)")
+        defaults.set(String(decoding: json, as: UTF8.self),
+                     forKey: "capture.shared.000000000000002.\(UUID().uuidString)")
+
+        let inbox = keys.captureInboxPrivateKey()
+        XCTAssertEqual(CaptureRouting.sharedQueue(opening: inbox, defaults: defaults),
+                       [.init(text: "from another writer"), .init(text: "from another writer")])
+        XCTAssertTrue(CaptureRouting.unopenableSharedEntries(opening: inbox, defaults: defaults).isEmpty)
+    }
+
     func testInboxKey_isDerived_soTheSamePhraseOpensItOnAnyDevice() {
         let again = KeyHierarchy(masterKey: keys.masterKey)
         XCTAssertEqual(again.captureInboxPublicKey(), keys.captureInboxPublicKey())

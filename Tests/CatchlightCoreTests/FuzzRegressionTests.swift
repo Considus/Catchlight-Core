@@ -15,8 +15,8 @@
 //  any string, so every caller below traps. Emoji and a decomposed "é" return nil safely.
 //  Apple's Foundation returns nil for the same input (checked on macOS 2026-10-05), so
 //  these six tests pass there with or without the fix; they guard Linux and Windows.
-//  The one exception is the duplicate-tombstone test, a separate bug in Core itself that
-//  traps on every platform.
+//  The exceptions are the duplicate-tombstone and capture-queue tests, separate bugs in Core
+//  itself that trap on every platform.
 //
 //  A trap kills the test process, so run these one at a time to see each fail:
 //      swift test --filter FuzzRegressionTests/<name>
@@ -154,5 +154,24 @@ final class FuzzRegressionTests: XCTestCase {
         XCTAssertThrowsError(try DeviceHandshake.unwrapMasterKey(response: response, ephemeralPrivate: priv, now: issued)) { error in
             XCTAssertEqual(error as? SyncError, .handshakeExpired)
         }
+    }
+
+    // MARK: - Capture queue (App Group defaults, 2026-10-06; a third bug, every platform)
+
+    /// fuzz-capture-inbox: one queued key whose time prefix is `Int64.max`. `enqueueShared`
+    /// stamps a share one past the newest queued time, so `Int64.max + 1` trapped in the share
+    /// extension and in Siri capture, on every share until the key was gone. A key outside
+    /// the writer's own 15-digit format must be ignored for ordering, and the share queued.
+    func testEnqueueShared_keyWithInt64MaxTimePrefix_queuesTheShare() throws {
+        let suite = "FuzzRegressionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        CaptureRouting.publishInboxKey(keys.captureInboxPublicKey(), defaults: defaults)
+        defaults.set("", forKey: "capture.shared.9223372036854775807")
+
+        XCTAssertTrue(CaptureRouting.enqueueShared(CaptureRouting.SharedItem(text: "after a planted key"),
+                                                   defaults: defaults))
+        let texts = CaptureRouting.sharedQueue(opening: keys.captureInboxPrivateKey(), defaults: defaults).map(\.text)
+        XCTAssertEqual(texts, ["after a planted key", ""])
     }
 }
