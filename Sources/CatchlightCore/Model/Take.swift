@@ -175,6 +175,42 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// flipping it twice returns the arrangement exactly (owner 2026-08-14).
     public var manualOrder: Double?
 
+    /// What this item IS, the same value its manifest entry carries ([[D-315]], [[D-326]]): nil for a
+    /// Take, `ManifestEntry.Kind.script` for a Script (a long-form Take, [[D-265]]). A copy lives in
+    /// the item's own encrypted file so the file explains itself without its manifest (a backup,
+    /// a Markdown export, which carries it in its data block). A String rather than an enum so a kind from a newer client survives a round trip
+    /// here untouched. A Take is the ABSENCE of a kind, never "take", so one item has one encoding
+    /// and every Take's bytes stay as they were before this field existed.
+    public var kind: String? {
+        didSet {
+            if kind == ManifestEntry.Kind.take { kind = nil }
+            // A page mode belongs to a Script: an item that becomes a Take drops it, so a Take's
+            // file never carries a Script field ([[D-326]]).
+            if kind == nil { pageMode = nil }
+        }
+    }
+
+    /// How a Script is laid out: continuous (the default, stored as nil), A4 or US Letter
+    /// ([[D-314]]). A PRESENTATION attribute, not data ([[D-265]]): a phone renders continuous
+    /// whatever it says. It lives inside the item's file only, never in the manifest, because a
+    /// phone rebuilds every manifest entry it writes and would drop it ([[D-326]]). A String for
+    /// the same forward-compatibility reason as `kind`.
+    ///
+    /// Only a Script has one: setting it on a Take keeps nothing, so set `kind` first when making
+    /// a Script, and a Take's file can never carry it.
+    public var pageMode: String? {
+        didSet { if pageMode == PageMode.continuous || kind == nil { pageMode = nil } }
+    }
+
+    public enum PageMode {
+        public static let continuous = "continuous"
+        public static let a4 = "a4"
+        public static let usLetter = "letter"
+    }
+
+    /// A Script, the long-form Take written on the desktop and iPad ([[D-265]]).
+    public var isScript: Bool { kind == ManifestEntry.Kind.script }
+
     public init(
         id: UUID = UUID(),
         createdAt: Date = Date(),
@@ -188,7 +224,9 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         attachments: [Attachment] = [],
         isSeeded: Bool = false,
         isImportant: Bool = false,
-        manualOrder: Double? = nil
+        manualOrder: Double? = nil,
+        kind: String? = nil,
+        pageMode: String? = nil
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.id = id
@@ -206,6 +244,9 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         // so an Obie constructed directly is also Important.
         self.isImportant = isImportant || isObie
         self.manualOrder = manualOrder
+        // didSet doesn't fire in init either: the same one-encoding rule, applied here.
+        self.kind = kind == ManifestEntry.Kind.take ? nil : kind
+        self.pageMode = self.kind == nil || pageMode == PageMode.continuous ? nil : pageMode
     }
 
     // MARK: - Derived content accessors
@@ -505,6 +546,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         case timeReminder, locationReminder, attachments
         case isSeeded, isImportant
         case manualOrder
+        case kind, pageMode
         // DROPPED in v2 (D-035): `bodyText`, `checklistItems` (now `blocks`), and
         // the formerly-stored `isTask` / `isComplete` (now derived). Old payloads
         // carrying those keys are upgraded in `init(from:)`; unknown keys on
@@ -559,6 +601,11 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         // position". Never defaulted to a number: a real 0 would pin every legacy
         // Take to the top of the manual arrangement.
         self.manualOrder = try c.decodeIfPresent(Double.self, forKey: .manualOrder)
+        // Absent on every Take and on every item written before Scripts existed.
+        let kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        self.kind = kind == ManifestEntry.Kind.take ? nil : kind
+        let pageMode = try c.decodeIfPresent(String.self, forKey: .pageMode)
+        self.pageMode = self.kind == nil || pageMode == PageMode.continuous ? nil : pageMode
         // NOTE for future versions: new fields added here MUST use
         // `decodeIfPresent` with a default so older payloads keep decoding.
     }
@@ -581,6 +628,9 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         // Omitted entirely when nil, so a Take nobody has dragged still serialises
         // byte-identically to its v2 form apart from the version number.
         try c.encodeIfPresent(manualOrder, forKey: .manualOrder)
+        // Omitted when nil, as `manualOrder` is: a Take's bytes never change ([[D-326]]).
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(pageMode, forKey: .pageMode)
     }
 
     /// Enforces the "Note is the floor" rule (UX §6). Call after any activity-type

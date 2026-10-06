@@ -30,7 +30,7 @@ git config core.hooksPath hooks
 
 🚨 **`Sources/CatchlightCore/Crypto/` holds frozen contract bytes.** The domain-separation strings and derivation parameters had specialist sign-off on 2026-06-05, revised to v1.1 on 2026-06-10, and every client on every platform has to agree on them. Changing one is not a refactor, it breaks existing data. Do not propose it.
 
-🚨 **The on-disk format is shared with every app and every device.** A change to what is written (a Take field, the manifest, an envelope) needs a reader for the old shape, and the apps have to agree it before it ships. Additive optional fields are the safe shape; see `ManifestEntry.kind` (D-315) for the precedent.
+🚨 **The on-disk format is shared with every app and every device.** A change to what is written (a Take field, the manifest, an envelope) needs a reader for the old shape, and the apps have to agree it before it ships. Additive optional fields are the safe shape; see `ManifestEntry.kind` (D-315) for the precedent, and `Take.kind` / `Take.pageMode` (D-326), written only when set so a Take's bytes never change (`TakeKindTests` pins those bytes against a golden from before the fields existed).
 
 `Sources/CatchlightCoreTestSupport/` is the second library product, for test targets only: the `TakeStoreContractTests` base class every app subclasses with its own store, and the shared fixtures (`TestFixtures.richTake`, `Take.primaryText`). Its tests also run here against `InMemoryTakeStore`. A change to the contract reaches each store through its pin bump, so treat it like an API change.
 

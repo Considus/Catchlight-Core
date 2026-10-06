@@ -211,6 +211,9 @@ public enum TakeImporter {
         // nil is meaningful here and is passed through unchanged: it means the Take
         // had no manual position, which is what every Take has until somebody drags one.
         take.manualOrder = meta.manualOrder
+        // A Script imports as a Script; nil on every Take and on every older export.
+        take.kind = meta.kind
+        take.pageMode = meta.pageMode
         take.normaliseActivityFloor()
         return take
     }

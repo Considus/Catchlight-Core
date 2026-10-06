@@ -45,6 +45,13 @@ struct TakeTransferMetadata: Codable {
     /// hand. `nil` means the Take has no manual position, which is the normal case.
     var manualOrder: Double?
 
+    /// A Script's kind and page mode ([[D-326]]), so an exported Script imports as a Script.
+    /// Optional for the same reason as the two above, and nil on every Take, so an export of
+    /// Takes is byte for byte what it was before these existed (the synthesised encoder omits
+    /// a nil optional).
+    var kind: String?
+    var pageMode: String?
+
     init(from take: Take) {
         self.createdAt = take.createdAt
         self.modifiedAt = take.modifiedAt
@@ -53,6 +60,8 @@ struct TakeTransferMetadata: Codable {
         self.locationReminder = take.locationReminder
         self.isImportant = take.isImportant
         self.manualOrder = take.manualOrder
+        self.kind = take.kind
+        self.pageMode = take.pageMode
     }
 }
 
