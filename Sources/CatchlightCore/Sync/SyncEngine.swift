@@ -258,7 +258,10 @@ public final class SyncEngine {
             // A device that holds Scripts deletes them like Takes.
             if let e = entries[id], !holds(e) { continue }
             let deletedAt = ISO8601.date(from: t.deletedAt) ?? .distantPast
-            if let local = localById[id], local.modifiedAt > deletedAt {
+            // A Script this device doesn't sync is no edit to the Take: it is never uploaded, so
+            // dropping the record would leave the folder with neither, and a device still holding
+            // the old Take would upload it again.
+            if let local = localById[id], holds(local), local.modifiedAt > deletedAt {
                 continue   // edited after deletion → the edit wins; entry stays
             }
             if now().timeIntervalSince(deletedAt) > Manifest.tombstoneRetention {
@@ -639,11 +642,17 @@ public final class SyncEngine {
                deletedAt >= remoteTake.modifiedAt {
                 continue
             }
+            // A Take this device made a Script, where Scripts aren't held: the folder keeps the
+            // Take as it was, so the two differ for good and the resolver's rules don't apply.
+            // Only a change to the Take since the last sync matters, and it is the user's to
+            // settle; it is reported by the one pass that finds it, never written over the Script.
+            if let local, !holds(local) {
+                if remoteTake.modifiedAt > (lastSync ?? .distantPast) {
+                    report.conflicts.append((local: local, remote: remoteTake))
+                }
+                continue
+            }
             switch ConflictResolver.decide(local: local, remote: remoteTake, lastSync: lastSync) {
-            case .takeRemote(let t) where local.map(holds) == false:
-                // The Take this device made a Script (where Scripts aren't held) changed
-                // elsewhere. Neither replaces the other: the user settles it, as any conflict.
-                report.conflicts.append((local: local!, remote: t))
             case .takeRemote(let t):
                 // RESURRECTION GUARD, part 2 (2026-07-23): the guard above consults
                 // `pendingTombstoneByID`, a snapshot taken at pull-start — a delete
