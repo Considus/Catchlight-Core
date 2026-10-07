@@ -32,6 +32,7 @@ let package = Package(
         .executableTarget(name: "fuzz-manifest", dependencies: ["FuzzSupport"], path: "Sources/FuzzManifest"),
         .executableTarget(name: "fuzz-blob", dependencies: ["FuzzSupport"], path: "Sources/FuzzBlob"),
         .executableTarget(name: "fuzz-phrase", dependencies: ["FuzzSupport"], path: "Sources/FuzzPhrase"),
+        .executableTarget(name: "fuzz-capture-inbox", dependencies: ["FuzzSupport"], path: "Sources/FuzzCaptureInbox"),
         .executableTarget(
             name: "fuzz-seeds",
             dependencies: [

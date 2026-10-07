@@ -15,8 +15,8 @@
 //  any string, so every caller below traps. Emoji and a decomposed "é" return nil safely.
 //  Apple's Foundation returns nil for the same input (checked on macOS 2026-10-05), so
 //  these six tests pass there with or without the fix; they guard Linux and Windows.
-//  The one exception is the duplicate-tombstone test, a separate bug in Core itself that
-//  traps on every platform.
+//  The exceptions are the duplicate-tombstone and capture-queue tests, separate bugs in Core
+//  itself that trap on every platform.
 //
 //  A trap kills the test process, so run these one at a time to see each fail:
 //      swift test --filter FuzzRegressionTests/<name>
@@ -154,5 +154,59 @@ final class FuzzRegressionTests: XCTestCase {
         XCTAssertThrowsError(try DeviceHandshake.unwrapMasterKey(response: response, ephemeralPrivate: priv, now: issued)) { error in
             XCTAssertEqual(error as? SyncError, .handshakeExpired)
         }
+    }
+
+    // MARK: - Capture queue (App Group defaults, 2026-10-06; a third bug, every platform)
+
+    /// fuzz-capture-inbox: one queued key whose time prefix is `Int64.max`. `enqueueShared`
+    /// stamps a share one past the newest queued time, so `Int64.max + 1` trapped in the share
+    /// extension and in Siri capture, on every share until the key was gone. A key outside
+    /// the writer's own 15-digit format must be ignored for ordering, and the share queued.
+    func testEnqueueShared_keyWithInt64MaxTimePrefix_queuesTheShare() throws {
+        let suite = "FuzzRegressionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        CaptureRouting.publishInboxKey(keys.captureInboxPublicKey(), defaults: defaults)
+        defaults.set("", forKey: "capture.shared.9223372036854775807")
+
+        XCTAssertTrue(CaptureRouting.enqueueShared(CaptureRouting.SharedItem(text: "after a planted key"),
+                                                   defaults: defaults))
+        let texts = CaptureRouting.sharedQueue(opening: keys.captureInboxPrivateKey(), defaults: defaults).map(\.text)
+        XCTAssertEqual(texts, ["after a planted key", ""])
+    }
+
+    /// Review of the fix above: a stamp capped at 15 digits could TIE a planted key at the top of
+    /// the range, leaving the order to the UUIDs. One below the cap, the new share takes the cap
+    /// itself and still sorts after it.
+    func testEnqueueShared_keyJustBelowTheCap_newShareStillSortsAfterIt() throws {
+        let suite = "FuzzRegressionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        CaptureRouting.publishInboxKey(keys.captureInboxPublicKey(), defaults: defaults)
+        defaults.set("planted", forKey: "capture.shared.999999999999998.\(UUID().uuidString)")
+
+        XCTAssertTrue(CaptureRouting.enqueueShared(CaptureRouting.SharedItem(text: "new"), defaults: defaults))
+        let texts = CaptureRouting.sharedQueue(opening: keys.captureInboxPrivateKey(), defaults: defaults).map(\.text)
+        XCTAssertEqual(texts, ["planted", "new"])
+    }
+
+    /// A planted key AT the cap: every later stamp was capped onto it, so every real share tied
+    /// with every other and the queue sorted them by UUID, scrambling the drain order and the cap
+    /// trim. The key at the cap is now ignored, and real shares keep their order (five of them,
+    /// so a pass by chance is 1 in 120). The planted key itself is unordered.
+    func testEnqueueShared_keyAtTheCap_realSharesKeepTheirOrder() throws {
+        let suite = "FuzzRegressionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        CaptureRouting.publishInboxKey(keys.captureInboxPublicKey(), defaults: defaults)
+        defaults.set("planted", forKey: "capture.shared.999999999999999.\(UUID().uuidString)")
+
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        for i in 1...5 {
+            XCTAssertTrue(CaptureRouting.enqueueShared(CaptureRouting.SharedItem(text: "share \(i)"), defaults: defaults,
+                                                       now: t0.addingTimeInterval(Double(i))))
+        }
+        let texts = CaptureRouting.sharedQueue(opening: keys.captureInboxPrivateKey(), defaults: defaults).map(\.text)
+        XCTAssertEqual(texts.filter { $0 != "planted" }, (1...5).map { "share \($0)" })
     }
 }

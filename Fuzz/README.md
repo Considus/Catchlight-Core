@@ -8,8 +8,9 @@ libFuzzer targets over Core's parsers of untrusted input. This is its own SwiftP
 | `fuzz-manifest` | first byte = mode, then `catchlight-manifest.json` (mode 0, no key), a v3 body sealed and signed with a fixed key (1), or a v1/v2 manifest re-signed (2) | `ManifestEnvelope`/`Manifest` decoding, `ManifestSigner.verify`, `Manifest.opening`, then a full `pullInbound` + `pushOutbound` (`readVerifiedManifest`) |
 | `fuzz-blob` | first byte = mode, then a `.clk` file (0, no key), a Take's JSON plaintext sealed under its item key (1), or a `.clk` listed with its correct HMAC (2) | `CloudBlob.parse`, `CryptoService.decrypt`, `TakeCrypto.open`, then pull + push |
 | `fuzz-phrase` | first byte = mode, then a typed or pasted phrase (0) or 16 bytes of entropy (1) | `PhraseRecovery.recoverMasterKey`, `BIP39.validate` and `mnemonic(fromEntropy:)` |
+| `fuzz-capture-inbox` | first byte = mode, then a queued App Group value (bit 0 clear: as text, bit 1 prepends `sealed1:`, bit 2 sends raw bytes as `sealed1:` + base64) or records of defaults keys and values (bit 0 set; bit 1 also enqueues a share) | `CaptureInbox.open` and HPKE; `CaptureRouting.sharedQueueEntries`, `unopenableSharedEntries`, `clearShared` and `enqueueShared` over keys under `capture.shared.`, the legacy `capture.sharedQueue` array and non-string values, checking the queue's documented invariants |
 
-The fixed key, store and folder are in `Sources/FuzzSupport`. Core ships no BIP-39 wordlist, so `fuzz-phrase` uses the unit tests' synthetic one (`w0` … `w2047`); `phrase.dict` holds its words.
+The fixed key, store, folder and inbox key, and `fuzz-capture-inbox`'s record format (`FuzzDefaultsRecord`), are in `Sources/FuzzSupport`. `FUZZ_CAPTURE_MODE=open` or `=defaults` pins `fuzz-capture-inbox` to one half. Its defaults half runs at tens of executions a second in a debug build (corelibs `UserDefaults` and HPKE dominate); `-c release` keeps Swift's overflow and precondition traps and is two to three times faster. Core ships no BIP-39 wordlist, so `fuzz-phrase` uses the unit tests' synthetic one (`w0` … `w2047`); `phrase.dict` holds its words.
 
 ## Run
 
@@ -22,8 +23,8 @@ docker run --rm -it -v "$PWD":/src -w /src/Fuzz swift:6.2.4-noble bash
 Then, inside the container:
 
 ```bash
-# Build the four targets (by product: fuzz-seeds cannot link under the fuzzer sanitizer).
-for p in fuzz-import fuzz-manifest fuzz-blob fuzz-phrase; do
+# Build the five targets (by product: fuzz-seeds cannot link under the fuzzer sanitizer).
+for p in fuzz-import fuzz-manifest fuzz-blob fuzz-phrase fuzz-capture-inbox; do
   swift build -c debug --product $p -Xswiftc -sanitize=fuzzer,address -Xswiftc -parse-as-library
 done
 
@@ -32,7 +33,7 @@ swift build -c debug --scratch-path .build-seeds --product fuzz-seeds
 .build-seeds/debug/fuzz-seeds seeds
 
 # Run one target: 20 minutes or 5 million executions, whichever comes first.
-# T is import, manifest, blob or phrase. `-dict` applies to import and phrase only.
+# T is import, manifest, blob, phrase or capture-inbox. `-dict` applies to import, phrase and capture-inbox only.
 export TZ=UTC SWIFT_BACKTRACE=enable=no ASAN_OPTIONS=detect_leaks=0
 mkdir -p corpus/$T artifacts/$T
 .build/debug/fuzz-$T corpus/$T seeds/$T -dict=$T.dict \

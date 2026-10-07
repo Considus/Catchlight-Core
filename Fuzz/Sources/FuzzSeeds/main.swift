@@ -70,6 +70,69 @@ struct FuzzSeeds {
             try write("phrase", "mnemonic-lines-\(i)", mode: 0, Data(("  " + words.joined(separator: "\n") + "\n").utf8))
             try write("phrase", "entropy-\(i)", mode: 1, entropy)
         }
+
+        // Capture inbox (R7): values sealed to the fixed inbox and the plain JSON an older
+        // build queued, alone (modes 0, 2, 4) and as App Group defaults (modes 1, 3).
+        let shares = [CaptureRouting.SharedItem(text: "https://example.com/a shared link"),
+                      CaptureRouting.SharedItem(text: "Obie this", isObie: true),
+                      CaptureRouting.SharedItem(text: "naïve 🎉\nline two")]
+        let plain = try shares.map { try PlatformJSON.encode($0) }
+        let sealed = try plain.map { try CaptureInbox.seal($0, to: Fuzz.inboxPublicKey) }
+        for (i, value) in sealed.enumerated() {
+            try write("capture-inbox", "sealed-\(i)", mode: 0, Data(value.utf8))
+            try write("capture-inbox", "sealed-body-\(i)", mode: 2, Data(value.dropFirst("sealed1:".count).utf8))
+            try write("capture-inbox", "sealed-bytes-\(i)", mode: 4,
+                      Data(base64Encoded: String(value.dropFirst("sealed1:".count)))!)
+            try write("capture-inbox", "plain-json-\(i)", mode: 0, plain[i])
+        }
+
+        typealias R = FuzzDefaultsRecord
+        let publish = R(.inboxKey, .string, Data(Fuzz.inboxPublicKey.base64EncodedString().utf8))
+        let uuid = ".0A1B2C3D-0000-4000-8000-000000000001"
+        func stamped(_ ms: String, _ value: FuzzDefaultsValue, _ bytes: Data) -> R {
+            R(.shared, value, key: ms + uuid, bytes)
+        }
+        func queue(_ name: String, _ records: [R]) throws {
+            let body = records.reduce(into: Data()) { $0.append($1.serialised) }
+            try write("capture-inbox", "defaults-\(name)", mode: 1, body)
+            try write("capture-inbox", "defaults-\(name)-enqueue", mode: 3, body)
+        }
+        try queue("sealed", [publish] + plain.enumerated().map {
+            stamped("00000175952000\($0.offset)", .sealed, $0.element)
+        })
+        try queue("sealed-verbatim", [publish] + sealed.enumerated().map {
+            stamped("00000175952000\($0.offset)", .string, Data($0.element.utf8))
+        })
+        try queue("plain-json", [publish] + plain.enumerated().map {
+            stamped("00000175952000\($0.offset)", .string, $0.element)
+        })
+        try queue("legacy", [publish,
+                             R(.legacy, .stringArray, plain[0] + Data([0]) + Data("bare text".utf8) + Data([0]) + plain[0]),
+                             stamped("000001759520000", .sealed, plain[1])])
+        // Odd time prefixes: none, negative, signed, Int64's minimum, 18 digits, past Int64, at and below the 15-digit cap,
+        // not ASCII, not decimal, padded. None of them traps or breaks queue order on its own:
+        // a seed that crashes would stop the run before it starts.
+        let odd = ["", "-1", "+5", "-9223372036854775808", "922337203685477580", "99999999999999999999", "999999999999999", "999999999999998",
+                   "١٢٣", "0x10", " 12", "12 "]
+        try queue("odd-prefixes", [publish] + odd.map { stamped($0, .sealed, plain[0]) }
+                  + [R(.shared, .string, key: "no-dot-at-all", Data("x".utf8)),
+                     R(.shared, .string, key: "...", Data("x".utf8))])
+        try queue("non-string", [publish,
+                                 stamped("000001759520001", .data, Data(sealed[0].utf8)),
+                                 stamped("000001759520002", .int, Data([1, 2, 3])),
+                                 stamped("000001759520003", .double, Data([0, 0, 0, 0, 0, 0, 0xf0, 0x3f])),
+                                 stamped("000001759520004", .bool, Data([1])),
+                                 stamped("000001759520005", .stringArray, Data(sealed[0].utf8)),
+                                 stamped("000001759520006", .mixedArray, plain[0] + Data([0, 7, 0]) + plain[1]),
+                                 stamped("000001759520007", .dictionary, Data("text".utf8)),
+                                 R(.legacy, .mixedArray, plain[0] + Data([0, 1, 0]) + plain[1]),
+                                 R(.legacy, .string, plain[0]),
+                                 R(.inboxKey, .data, Fuzz.inboxPublicKey)])
+        try queue("wrong-inbox", [R(.inboxKey, .string, Data(Data(repeating: 9, count: 32).base64EncodedString().utf8)),
+                                  stamped("000001759520000", .sealed, plain[0])])
+        try queue("over-cap", [publish] + (0..<52).map {
+            stamped(String(format: "%015d", 1_759_520_000_000 + $0), .sealed, plain[$0 % 3])
+        })
     }
 }
 try FuzzSeeds.main()

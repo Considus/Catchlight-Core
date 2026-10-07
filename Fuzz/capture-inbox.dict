@@ -1,0 +1,12 @@
+# fuzz-capture-inbox: the sealed prefix, SharedItem JSON, and key punctuation.
+"sealed1:"
+"capture.shared."
+"{\"text\":"
+"\"isObie\":"
+"true"
+"false"
+"null"
+"."
+"-"
+"+"
+"=="
