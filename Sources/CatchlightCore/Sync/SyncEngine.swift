@@ -160,8 +160,8 @@ public final class SyncEngine {
     /// re-sign the manifest.
     /// - Parameter isCancelled: cooperative cancellation seam (BGTask expiry).
     @discardableResult
-    /// - Parameter heldIDs: Takes the pull has just reported as conflicts. Neither version is
-    ///   uploaded until the user picks one: resolving stamps the winner as a fresh edit, and the
+    /// - Parameter heldIDs: Takes waiting for the user's choice: the app's queue and the conflicts
+    ///   the pull has just reported. Neither version is uploaded until the user picks one: resolving stamps the winner as a fresh edit, and the
     ///   push after that uploads it (R4, owner decision 2026-10-05).
     public func pushOutbound(isCancelled: () -> Bool = { false },
                              repairing repairIDs: Set<UUID> = [],
@@ -511,8 +511,12 @@ public final class SyncEngine {
 
     /// Verify + merge remote changes. Never modifies local state if the manifest
     /// signature is invalid.
+    /// - Parameter heldIDs: Takes waiting for the user's conflict choice (the app's queue). A
+    ///   held Take is never overwritten or deleted from the folder's side; a newer remote version
+    ///   is reported as the conflict again, so the pair the user sees is current.
     @discardableResult
-    public func pullInbound(isCancelled: () -> Bool = { false }) throws -> SyncReport {
+    public func pullInbound(isCancelled: () -> Bool = { false },
+                            holding heldIDs: Set<UUID> = []) throws -> SyncReport {
         guard let cloud else { throw SyncError.noCloudFolderConfigured }
         var report = SyncReport()
 
@@ -534,6 +538,8 @@ public final class SyncEngine {
         for t in manifest.tombstones where !scriptIds.contains(t.uuid) {
             if isCancelled() { throw CancellationError() }
             let deletedAt = ISO8601.date(from: t.deletedAt) ?? .distantPast
+            // Waiting for the user's choice: their copy stays until they pick (owner 2026-10-07).
+            if heldIDs.contains(t.uuid) { continue }
             // A Take this device made a Script, where Scripts aren't held, was never sent as a
             // Script; the deletion of the Take it was leaves the Script alone (D-325).
             if let local = try store.take(id: t.uuid), holds(local), local.modifiedAt <= deletedAt {
@@ -629,6 +635,16 @@ public final class SyncEngine {
             }
 
             let local = try store.take(id: entry.uuid)
+            // HELD (owner 2026-10-07: "the file shouldn't update or edit until the conflict is
+            // resolved"). The user is choosing between two versions; nothing from the folder is
+            // written over theirs meanwhile. A version newer than the last sync is reported, so
+            // the app's pair carries the latest one the user could keep.
+            if heldIDs.contains(entry.uuid), let local {
+                if remoteTake.modifiedAt > (lastSync ?? .distantPast), remoteTake != local {
+                    report.conflicts.append((local: local, remote: remoteTake))
+                }
+                continue
+            }
             // RESURRECTION GUARD (2026-06-21): the Take is absent locally because we
             // DELETED it and that tombstone hasn't reached the cloud yet — so the manifest
             // still lists it with no tombstone. Without this, `ConflictResolver` reads
@@ -743,10 +759,12 @@ public final class SyncEngine {
     /// entries exist to remove (2026-09-02 — a no-op-save conflict took hours to diagnose
     /// because pushes left no trace at all).
     @discardableResult
-    public func sync(isCancelled: () -> Bool = { false }) throws -> SyncReport {
+    /// - Parameter heldIDs: Takes waiting for the user's conflict choice, from the app's own queue,
+    ///   which outlives a single pass and a relaunch. Held alongside the conflicts this pass finds.
+    public func sync(isCancelled: () -> Bool = { false }, holding heldIDs: Set<UUID> = []) throws -> SyncReport {
         var report: SyncReport
         do {
-            report = try pullInbound(isCancelled: isCancelled)
+            report = try pullInbound(isCancelled: isCancelled, holding: heldIDs)
         } catch {
             let ns = error as NSError
             DiagnosticsLog.shared.record(.syncPullFailed, "Sync: pull failed (\(ns.domain) \(ns.code))")
@@ -756,7 +774,7 @@ public final class SyncEngine {
         do {
             let out = try pushOutbound(isCancelled: isCancelled,
                                        repairing: Set(report.repairCandidates),
-                                       holding: Set(report.conflicts.map(\.local.id)))
+                                       holding: heldIDs.union(report.conflicts.map(\.local.id)))
             report.uploaded = out.uploaded
             report.heldBack = out.heldBack
             report.repaired = out.repaired
