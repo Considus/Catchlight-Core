@@ -80,20 +80,26 @@ public func fuzzCaptureInbox(_ start: UnsafeRawPointer, _ count: Int) -> CInt {
         let published = defaults.string(forKey: FuzzDefaultsRecord.inboxPublicKeyKey).flatMap { Data(base64Encoded: $0) }
         if wrote && published == Fuzz.inboxPublicKey {
             // "a share always sorts after the ones before it": the ones in the writer's own
-            // format, 15 zero-padded digits. Keys sort as strings, so nothing can promise to
-            // sort after a key no writer makes (`capture.shared.zzz`, or 16 digits).
-            let timed = keyedAfter.keys.filter {
-                let digits = $0.dropFirst(FuzzDefaultsRecord.sharedPrefix.count).prefix { $0 != "." }
+            // format, 15 zero-padded digits below the cap. Keys sort as strings, so nothing can
+            // promise to sort after a key no writer makes (`capture.shared.zzz`, or 16 digits),
+            // and a key AT the cap can only be tied, which leaves the order to the UUIDs.
+            func prefix(_ key: String) -> Substring {
+                key.dropFirst(FuzzDefaultsRecord.sharedPrefix.count).prefix { $0 != "." }
+            }
+            func inFormat(_ key: String) -> Bool {
+                let digits = prefix(key)
                 return digits.count == 15 && digits.allSatisfy { $0.isASCII && $0.isWholeNumber }
-            }.sorted()
+            }
             let mine = keyedAfter.first { key, value in
                 (try? CaptureInbox.open(value as! String, with: Fuzz.inboxKey)).map {
                     String(decoding: $0, as: UTF8.self).contains("fuzz-new-share")
                 } ?? false
             }?.key
             check(mine != nil, "the new share does not open")
-            check(timed.contains(mine!), "the new share's key \(mine!) is outside the writer's format")
-            check(mine == timed.last, "the new share \(mine ?? "-") sorts before \(timed.last ?? "-")")
+            check(inFormat(mine!), "the new share's key \(mine!) is outside the writer's format")
+            let belowCap = keyedAfter.keys.filter { $0 != mine && inFormat($0) && prefix($0) != "999999999999999" }
+            check(belowCap.allSatisfy { $0 < mine! },
+                  "the new share \(mine!) sorts before \(belowCap.max() ?? "-")")
             check(keyedAfter.count <= CaptureRouting.sharedQueueCap, "\(keyedAfter.count) keyed after the cap")
         }
     }

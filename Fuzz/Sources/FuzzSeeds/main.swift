@@ -109,10 +109,10 @@ struct FuzzSeeds {
         try queue("legacy", [publish,
                              R(.legacy, .stringArray, plain[0] + Data([0]) + Data("bare text".utf8) + Data([0]) + plain[0]),
                              stamped("000001759520000", .sealed, plain[1])])
-        // Odd time prefixes: none, negative, signed, Int64's minimum, 18 digits, past Int64,
+        // Odd time prefixes: none, negative, signed, Int64's minimum, 18 digits, past Int64, at and below the 15-digit cap,
         // not ASCII, not decimal, padded. None of them traps or breaks queue order on its own:
         // a seed that crashes would stop the run before it starts.
-        let odd = ["", "-1", "+5", "-9223372036854775808", "922337203685477580", "99999999999999999999",
+        let odd = ["", "-1", "+5", "-9223372036854775808", "922337203685477580", "99999999999999999999", "999999999999999", "999999999999998",
                    "١٢٣", "0x10", " 12", "12 "]
         try queue("odd-prefixes", [publish] + odd.map { stamped($0, .sealed, plain[0]) }
                   + [R(.shared, .string, key: "no-dot-at-all", Data("x".utf8)),

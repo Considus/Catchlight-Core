@@ -387,11 +387,15 @@ public enum CaptureRouting {
 
     /// The time prefix of a per-key share, or nil for any key `enqueueShared` would not write.
     /// Only exactly 15 ASCII digits count, so a planted `capture.shared.9223372036854775807.x`
-    /// can neither overflow the next stamp nor push it past 15 digits.
+    /// can neither overflow the next stamp nor push it past 15 digits. A key AT the cap is ignored
+    /// too: the next stamp could only tie it, and two keys with one prefix sort by their random
+    /// UUIDs, so ordering after it cannot be promised. Real clocks reach the cap in year 33658,
+    /// so only a planted key is ever there, and it is unordered.
     private static func millis(fromKey key: String) -> Int64? {
         let digits = key.dropFirst(sharedKeyPrefix.count).prefix { $0 != "." }
-        guard digits.count == 15, digits.allSatisfy({ $0.isASCII && $0.isWholeNumber }) else { return nil }
-        return Int64(digits)
+        guard digits.count == 15, digits.allSatisfy({ $0.isASCII && $0.isWholeNumber }),
+              let value = Int64(digits), value < maxStamp else { return nil }
+        return value
     }
 
     private static func open(_ sealed: String, with inbox: Curve25519.KeyAgreement.PrivateKey) -> SharedItem? {
