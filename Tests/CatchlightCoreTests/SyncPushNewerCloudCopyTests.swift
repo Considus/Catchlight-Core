@@ -114,9 +114,10 @@ final class SyncPushNewerCloudCopyTests: XCTestCase {
         XCTAssertEqual(try storeB.take(id: id)?.primaryText, "offline edit on A")
     }
 
-    /// Another device turns the Take into a Script between A's pull and A's push. The hold
-    /// must not stop the D-315 fork, or the next pull lets the Take go and A's edit with it.
-    func testCloudCopyBecomesAScriptMidSync_heldEditIsKeptAsANewTake() throws {
+    /// Another device turns the Take into a Script between A's pull and A's push. While the user
+    /// is choosing, the held Take is neither forked nor let go (owner rule, 2026-10-09): A's edit
+    /// stays where it is, and the app is told the pair's other side is now a Script.
+    func testCloudCopyBecomesAScriptMidSync_heldEditIsKeptUntouched() throws {
         let id = try diverge(offlineAt: 10)
         let engineA = TestFixtures.engine(store: storeA, cloud: cloud, keys: k, deviceId: deviceA,
                                           now: { self.t0.addingTimeInterval(30) })
@@ -132,10 +133,13 @@ final class SyncPushNewerCloudCopyTests: XCTestCase {
         try Manifest.writeEncrypted(manifest, to: cloud, keys: k)
 
         try engineA.pushOutbound(holding: Set(pulled.conflicts.map(\.local.id)))
-        try syncA(40)
+        let next = try TestFixtures.engine(store: storeA, cloud: cloud, keys: k, deviceId: deviceA,
+                                           now: { self.t0.addingTimeInterval(40) }).sync(holding: [id])
 
-        XCTAssertTrue(try storeA.allTakes().contains { $0.primaryText == "offline edit on A" },
-                      "A's held edit was lost when the cloud copy became a Script")
+        XCTAssertEqual(try storeA.take(id: id)?.primaryText, "offline edit on A",
+                       "A's held edit was lost when the cloud copy became a Script")
+        XCTAssertEqual(next.heldConverted, [id])
+        XCTAssertEqual(next.forkedFromScripts, [])
     }
 
 }
