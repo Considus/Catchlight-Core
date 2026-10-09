@@ -315,4 +315,51 @@ final class SyncHeldTakeTests: XCTestCase {
         XCTAssertEqual(try cloud.read("\(id.uuidString).clk"), Data("the Mac's Script".utf8))
         XCTAssertEqual(try storeA.take(id: id)?.primaryText, "second edit on A")
     }
+
+    // MARK: - Review of #29
+
+    /// Review of #29: this device's Obie O meets its conflict in the SAME pass that brings
+    /// another device's Obie X, and X sorts first in the folder's index. O isn't in the app's hold
+    /// set yet, so only the pull itself can know it must not be demoted. It must look at O first.
+    func testObieConflictFoundInTheSamePassAsAnIncomingObie_isNotDemoted() throws {
+        var o = TestFixtures.richTake(id: UUID(uuidString: "FFFFFFFF-FFFF-4FFF-BFFF-FFFFFFFFFFFF")!)   // sorts last in the index
+        o.primaryText = "base"
+        o.modifiedAt = t0
+        o.isObie = true
+        try storeA.upsert(o)
+        try syncA(1)
+        try syncB(2)
+        try edit(storeA, o.id, "offline edit on A", at: 10)
+        var x = TestFixtures.richTake(id: UUID(uuidString: "00000000-0000-4000-8000-000000000001")!)   // sorts first
+        x.primaryText = "the new Obie, made on B"
+        x.modifiedAt = t0.addingTimeInterval(20)
+        x.isObie = true
+        try storeB.upsert(x)   // B's store demotes and re-stamps O
+        try syncB(21)
+
+        let report = try syncA(30)
+
+        let mine = try XCTUnwrap(storeA.take(id: o.id))
+        XCTAssertTrue(mine.isObie, "A's Obie is not demoted while its conflict waits")
+        XCTAssertEqual(mine.modifiedAt, t0.addingTimeInterval(10), "nor re-stamped")
+        XCTAssertEqual(mine.primaryText, "offline edit on A")
+        XCTAssertEqual(report.conflicts.map(\.local.id), [o.id])
+        XCTAssertEqual(try storeA.take(id: x.id)?.isObie, false, "X lands without the flag")
+    }
+
+    /// Review of #29: a held Take's deletion record outlives the retention window while held,
+    /// or the folder would keep neither its entry nor its record.
+    func testHeld_aDeletionRecordPastRetention_staysWhileHeld() throws {
+        let id = try conflictOnA()
+        try storeB.delete(id: id)
+        try TestFixtures.engine(store: storeB, cloud: cloud, keys: k, deviceId: deviceB, now: { Date() }).sync()
+        let long = Date().addingTimeInterval(Manifest.tombstoneRetention + 86_400)
+
+        try TestFixtures.engine(store: storeA, cloud: cloud, keys: k, deviceId: deviceA, now: { long })
+            .sync(holding: [id])
+
+        XCTAssertEqual(try Manifest.readEncrypted(from: cloud, keys: k).tombstones.map(\.uuid), [id])
+        XCTAssertNotNil(try storeA.take(id: id))
+    }
+
 }

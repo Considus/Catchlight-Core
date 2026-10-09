@@ -278,7 +278,8 @@ public final class SyncEngine {
             if let local = localById[id], holds(local), local.modifiedAt > deletedAt, !heldIDs.contains(id) {
                 continue   // edited after deletion → the edit wins; entry stays
             }
-            if now().timeIntervalSince(deletedAt) > Manifest.tombstoneRetention {
+            // Held, the record outlives retention too: the Take has no entry to fall back on.
+            if now().timeIntervalSince(deletedAt) > Manifest.tombstoneRetention, !heldIDs.contains(id) {
                 continue   // every device has had ample time to observe it
             }
             // If the manifest still listed a live entry for this id (a MERGED
@@ -611,7 +612,12 @@ public final class SyncEngine {
         }
 
         // 3–6. Per-entry verify, decrypt, conflict-detect, merge.
-        for entry in manifest.takes where !tombstonedIds.contains(entry.uuid) {
+        // This device's Obie goes first: if its conflict is found in this pass, it must be known
+        // before another device's Obie is applied, or the store would demote it (`obieIsHeld`).
+        let localObieID = try store.currentObie()?.id
+        let entriesInOrder = manifest.takes.filter { $0.uuid == localObieID }
+            + manifest.takes.filter { $0.uuid != localObieID }
+        for entry in entriesInOrder where !tombstonedIds.contains(entry.uuid) {
             if isCancelled() { throw CancellationError() }
             // NOT A TAKE (D-315). A Script, or a kind from a newer client, is NEVER fetched or
             // shown here, in any branch; push carries its entry forward untouched.
