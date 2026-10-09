@@ -81,6 +81,15 @@ public struct SyncReport: Equatable, Sendable {
     /// New Takes made from this device's edit of a Take that another device turned into a
     /// Script and edited too (D-315). Also listed in `applied`, so reminders are armed.
     public var forkedFromScripts: [UUID] = []
+    /// Held Takes (`sync(holding:)`) whose folder entry another device has turned into a kind
+    /// this device does not hold: a Script, on the phone (D-315). Each is left exactly as it is
+    /// and listed on every pass while held; the Script is never read here, so there is no pair
+    /// to refresh. Resolving one must not re-stamp the Take, or the next push writes the
+    /// choice into the Script: keep this device's version as a new Take, or let it go.
+    public var heldConverted: [UUID] = []
+    /// Pull → push hand-off inside `sync()`: Takes applied without the Obie flag because this
+    /// device's Obie is held. Push leaves them alone, so the folder keeps the flag.
+    var obieFlagHeld: [UUID] = []
     public var uploaded: [UUID] = []         // local versions written to cloud
     /// Live local Takes push's self-heal step did NOT re-upload because this
     /// device was offline longer than the tombstone-retention window (2026-07-01):
@@ -104,6 +113,7 @@ public struct SyncReport: Equatable, Sendable {
         a.uploaded == b.uploaded &&
         a.heldBack == b.heldBack &&
         a.forkedFromScripts == b.forkedFromScripts &&
+        a.heldConverted == b.heldConverted &&
         a.pushDeferred == b.pushDeferred &&
         a.conflicts.map(\.local.id) == b.conflicts.map(\.local.id) &&
         a.conflicts.map(\.remote.id) == b.conflicts.map(\.remote.id)
@@ -209,8 +219,9 @@ public final class SyncEngine {
             if isCancelled() { throw CancellationError() }
             // A Take waiting for the user's choice keeps whatever the cloud holds. Uploading
             // here would replace the other device's version before the user has picked one.
-            // Once that version has become a Script, the D-315 fork below applies instead.
-            if heldIDs.contains(take.id), entriesBeforePush[take.id].map(holds) != false { continue }
+            // That holds whatever the entry has become, or whether there is one: a Script is
+            // neither written into nor forked from while held (owner rule, 2026-10-09).
+            if heldIDs.contains(take.id) { continue }
             // Never upload over an item this device can't hold (a Script, on the phone) that
             // carries an edit it has not seen (D-315): keep this edit as a new Take instead.
             if let e = entriesBeforePush[take.id], !holds(e), Self.changedElsewhere(e, since: lastSync) {
@@ -261,7 +272,10 @@ public final class SyncEngine {
             // A Script this device doesn't sync is no edit to the Take: it is never uploaded, so
             // dropping the record would leave the folder with neither, and a device still holding
             // the old Take would upload it again.
-            if let local = localById[id], holds(local), local.modifiedAt > deletedAt {
+            // Held, the edit waits for the user like any other upload, and the folder keeps the
+            // deletion: dropping the record would let a device that never saw it upload the
+            // Take again.
+            if let local = localById[id], holds(local), local.modifiedAt > deletedAt, !heldIDs.contains(id) {
                 continue   // edited after deletion → the edit wins; entry stays
             }
             if now().timeIntervalSince(deletedAt) > Manifest.tombstoneRetention {
@@ -315,8 +329,8 @@ public final class SyncEngine {
         //    so there is no deletion to resurrect and nothing to hold back for.
         for take in localTakes where !tombstonedIds.contains(take.id) && holds(take) {
             if isCancelled() { throw CancellationError() }
+            if heldIDs.contains(take.id) { continue }   // as step 1, with an entry or without
             if let entry = entries[take.id] {
-                if heldIDs.contains(take.id), entriesBeforePush[take.id].map(holds) != false { continue }   // as step 1
                 if let before = entriesBeforePush[take.id], !holds(before),
                    Self.changedElsewhere(before, since: lastSync) {   // D-315, as step 1
                     // Only an edit newer than the last sync needs keeping; anything older is
@@ -475,6 +489,14 @@ public final class SyncEngine {
         return try store.take(id: id)
     }
 
+    /// The Take as it is applied while this device's Obie is held: everything but the flag.
+    /// `isImportant` stays set, as it does whenever an Obie is demoted.
+    private static func withoutObie(_ take: Take) -> Take {
+        var take = take
+        take.isObie = false
+        return take
+    }
+
     /// Push's side of the same rule. A push can run without a pull first, and it advances the
     /// watermark: an edit it merely skipped would then look synced, and the next pull would let
     /// the Take go and lose it. So push forks it here and uploads the copy in the same pass.
@@ -513,7 +535,9 @@ public final class SyncEngine {
     /// signature is invalid.
     /// - Parameter heldIDs: Takes waiting for the user's conflict choice (the app's queue). A
     ///   held Take is never overwritten or deleted from the folder's side; a newer remote version
-    ///   is reported as the conflict again, so the pair the user sees is current.
+    ///   is reported as the conflict again, so the pair the user sees is current. Nor is it let
+    ///   go or forked when another device turns it into a Script (`heldConverted`), or demoted
+    ///   by another device's Obie, which lands without the flag until the hold is lifted.
     @discardableResult
     public func pullInbound(isCancelled: () -> Bool = { false },
                             holding heldIDs: Set<UUID> = []) throws -> SyncReport {
@@ -527,6 +551,13 @@ public final class SyncEngine {
         }
 
         let lastSync = store.lastSyncDate()
+
+        // Whether this device's Obie, other than `id`, is waiting for the user: the app's queue,
+        // or a conflict this pass has already reported (push holds those too).
+        func obieIsHeld(besides id: UUID) throws -> Bool {
+            guard let obie = try store.currentObie(), obie.id != id else { return false }
+            return heldIDs.contains(obie.id) || report.conflicts.contains { $0.local.id == obie.id }
+        }
 
         // 2. Apply tombstones (edit-wins by timestamp). A local edit made AFTER
         //    the deletion survives and will re-assert the Take on the next push.
@@ -593,6 +624,12 @@ public final class SyncEngine {
             //     read here. The phone's edit is kept as a NEW Take (`forkedFromScripts`), the
             //     original is let go, and the Script stays exactly as the other device left it.
             if !holds(entry) {
+                // Held (owner rule, 2026-10-09): never let go or forked while the user is
+                // choosing. Listed every pass, for the app to resolve it without re-stamping.
+                if heldIDs.contains(entry.uuid) {
+                    if try store.take(id: entry.uuid) != nil { report.heldConverted.append(entry.uuid) }
+                    continue
+                }
                 if let lastSync, try store.release(id: entry.uuid, ifNotModifiedAfter: lastSync) {
                     report.deletedLocally.append(entry.uuid)
                     continue
@@ -668,7 +705,25 @@ public final class SyncEngine {
                 }
                 continue
             }
+            // OBIE HELD (owner rule, 2026-10-09). Another device's Obie would make the store
+            // demote and re-stamp this device's, and while that one waits for the user's choice
+            // nothing may change it. The incoming Take lands without the flag, and push leaves
+            // it alone so the folder keeps the flag; once the hold is lifted, the copy here
+            // differs from the folder's by the flag alone, and the flag lands then.
+            if let local, remoteTake.isObie, !local.isObie, local == Self.withoutObie(remoteTake) {
+                if try obieIsHeld(besides: entry.uuid) {
+                    report.obieFlagHeld.append(entry.uuid)
+                } else if try store.applyRemote(remoteTake) {
+                    report.applied.append(entry.uuid)
+                }
+                continue
+            }
             switch ConflictResolver.decide(local: local, remote: remoteTake, lastSync: lastSync) {
+            case .takeRemote(let t) where try t.isObie && obieIsHeld(besides: t.id):
+                if try store.applyRemote(Self.withoutObie(t)) {
+                    report.applied.append(t.id)
+                    report.obieFlagHeld.append(t.id)
+                }
             case .takeRemote(let t):
                 // RESURRECTION GUARD, part 2 (2026-07-23): the guard above consults
                 // `pendingTombstoneByID`, a snapshot taken at pull-start — a delete
@@ -774,7 +829,8 @@ public final class SyncEngine {
         do {
             let out = try pushOutbound(isCancelled: isCancelled,
                                        repairing: Set(report.repairCandidates),
-                                       holding: heldIDs.union(report.conflicts.map(\.local.id)))
+                                       holding: heldIDs.union(report.conflicts.map(\.local.id))
+                                                       .union(report.obieFlagHeld))
             report.uploaded = out.uploaded
             report.heldBack = out.heldBack
             report.repaired = out.repaired
