@@ -375,7 +375,6 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         blocks = rebuilt
     }
 
-    /// Set the text of the block with `blockID` (no-op if it's gone).
     /// Stamp the Take as changed, strictly after its previous `modifiedAt`: the clock's time,
     /// or 1 ms after the previous stamp when the clock reads the same millisecond or earlier.
     /// Sync uploads a Take only when its `modifiedAt` is later than the last sync and than the
@@ -388,6 +387,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         modifiedAt = max(ISO8601.truncateToMilliseconds(now), modifiedAt.addingTimeInterval(0.001))
     }
 
+    /// Set the text of the block with `blockID` (no-op if it's gone).
     public mutating func updateText(_ text: String, blockID: UUID) {
         guard let index = blocks.firstIndex(where: { $0.id == blockID }) else { return }
         switch blocks[index] {
