@@ -375,6 +375,18 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         blocks = rebuilt
     }
 
+    /// Stamp the Take as changed, strictly after its previous `modifiedAt`: the clock's time,
+    /// or 1 ms after the previous stamp when the clock reads the same millisecond or earlier.
+    /// Sync uploads a Take only when its `modifiedAt` is later than the last sync and than the
+    /// cloud copy's (`SyncEngine.push`), so a change stamped no later than the version already
+    /// pushed (a coarse clock, the clock set back) stayed on the device for good. Every save
+    /// that bumps `modifiedAt` goes through here rather than assigning `Date()` (2026-10-11).
+    /// A stamp from a device whose clock ran ahead carries forward to the next edit; at worst
+    /// that later surfaces as a conflict the user sees, never as a change left unsynced.
+    public mutating func markModified(at now: Date = Date()) {
+        modifiedAt = max(ISO8601.truncateToMilliseconds(now), modifiedAt.addingTimeInterval(0.001))
+    }
+
     /// Set the text of the block with `blockID` (no-op if it's gone).
     public mutating func updateText(_ text: String, blockID: UUID) {
         guard let index = blocks.firstIndex(where: { $0.id == blockID }) else { return }

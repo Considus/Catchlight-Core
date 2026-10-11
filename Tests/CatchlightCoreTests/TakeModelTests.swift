@@ -302,12 +302,15 @@ final class TakeModelTests: XCTestCase {
 
     func testTake_modifiedAt_bumpsAfterMutation() throws {
         let original = Take(blocks: [.textLine("first")])
-        // Sleep one ms to guarantee a measurable bump in `modifiedAt`. We deliberately
-        // touch `modifiedAt` ourselves — the model doesn't auto-stamp on field mutation.
+        // The model doesn't auto-stamp on field mutation; a save stamps it with
+        // `markModified`. It must move forward even when the clock hasn't: this used to
+        // sleep 1 ms and assign `Date()`, which failed on Windows CI, where both readings
+        // landed in the same millisecond. That was the real defect (an edit stamped no later
+        // than the pushed version never synced), fixed in `markModified`, so the test now
+        // hands it the same instant the Take was created.
         var mutated = original
-        Thread.sleep(forTimeInterval: 0.001)
         mutated.updateText("second", blockID: original.blocks[0].id)
-        mutated.modifiedAt = Date()
+        mutated.markModified(at: original.createdAt)
         XCTAssertGreaterThan(mutated.modifiedAt, original.createdAt,
                              "modifiedAt must move forward after a mutation")
     }

@@ -124,7 +124,7 @@ public final class InMemoryTakeStore: TakeStore {
                 // by `modifiedAt > watermark`, so an un-bumped demotion never
                 // re-uploaded and the cloud kept a stale isObie=true blob →
                 // phantom conflicts. Mirrors EncryptedTakeStore.upsert / setObie.
-                other.modifiedAt = Date()
+                other.markModified()
                 takes[id] = other
             }
         }
@@ -200,11 +200,11 @@ public final class InMemoryTakeStore: TakeStore {
             guard replaceExisting else { throw StorageError.obieConflict(existing: existing.id) }
             var old = existing
             old.isObie = false
-            old.modifiedAt = Date()
+            old.markModified()
             takes[old.id] = old
         }
         target.isObie = true
-        target.modifiedAt = Date()
+        target.markModified()
         takes[id] = target
     }
 
