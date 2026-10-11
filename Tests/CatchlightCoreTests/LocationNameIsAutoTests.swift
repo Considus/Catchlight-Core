@@ -34,6 +34,18 @@ final class LocationNameIsAutoTests: XCTestCase {
         XCTAssertEqual(String(data: try PlatformJSON.encode(decoded), encoding: .utf8), golden)
     }
 
+    /// A whole Take carrying a place reminder, which is what is written to disk and synced:
+    /// its bytes are unchanged too while the name is the user's.
+    func testATakeWithAPlaceReminder_keepsItsBytes() throws {
+        let take = Take(id: UUID(uuidString: "6F1C2A9E-3B7D-4E2A-9C1F-0D8E7A6B5C4D")!,
+                        createdAt: Date(timeIntervalSince1970: 1_780_000_000.123),
+                        modifiedAt: Date(timeIntervalSince1970: 1_780_000_060.123),
+                        blocks: [.text(TextBlock(id: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!, text: "Post the parcel"))],
+                        locationReminder: place())
+        let takeGolden = #"{"attachments":[],"blocks":[{"id":"11111111-2222-3333-4444-555555555555","kind":"text","text":"Post the parcel"}],"contentType":"blocks/v2","createdAt":"2026-05-28T20:26:40.123Z","id":"6F1C2A9E-3B7D-4E2A-9C1F-0D8E7A6B5C4D","isImportant":false,"isNote":true,"isObie":false,"isSeeded":false,"locationReminder":"# + golden + #","modifiedAt":"2026-05-28T20:27:40.123Z","schemaVersion":3}"#
+        XCTAssertEqual(String(data: try PlatformJSON.encode(take), encoding: .utf8), takeGolden)
+    }
+
     func testAnAutoNamedPlace_roundTrips() throws {
         var auto = place(named: "12 Acacia Avenue")
         auto.locationNameIsAuto = true

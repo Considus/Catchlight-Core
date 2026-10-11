@@ -47,7 +47,8 @@ public struct LocationTrigger: Codable, Equatable, Sendable {
     /// and keeps one the user chose. Additive and written only when true, so a place
     /// reminder without it keeps its bytes, and older payloads decode as user-chosen. An
     /// older client re-saving the Take drops it, which also reads as user-chosen: the safe
-    /// side, since a typed name is never replaced.
+    /// side, since a typed name is never replaced. A client sets it only when it fills the
+    /// name in, and clears it whenever the user types one.
     public var locationNameIsAuto: Bool
 
     public init(
