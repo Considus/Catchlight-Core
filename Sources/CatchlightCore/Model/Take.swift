@@ -382,6 +382,8 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// cloud copy's (`SyncEngine.push`), so a change stamped no later than the version already
     /// pushed (a coarse clock, the clock set back) stayed on the device for good. Every save
     /// that bumps `modifiedAt` goes through here rather than assigning `Date()` (2026-10-11).
+    /// A stamp from a device whose clock ran ahead carries forward to the next edit; at worst
+    /// that later surfaces as a conflict the user sees, never as a change left unsynced.
     public mutating func markModified(at now: Date = Date()) {
         modifiedAt = max(ISO8601.truncateToMilliseconds(now), modifiedAt.addingTimeInterval(0.001))
     }
