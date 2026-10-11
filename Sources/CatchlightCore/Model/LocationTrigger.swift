@@ -41,6 +41,15 @@ public struct LocationTrigger: Codable, Equatable, Sendable {
     /// payloads keep decoding with no behaviour change.
     public var isDone: Bool
 
+    /// The app filled `locationName` in itself (owner 2026-10-11): the "Current location"
+    /// placeholder, a reverse-geocoded address or a search result's title, not a name the
+    /// user typed. An editor reopened later lets the next place picked replace such a name
+    /// and keeps one the user chose. Additive and written only when true, so a place
+    /// reminder without it keeps its bytes, and older payloads decode as user-chosen. An
+    /// older client re-saving the Take drops it, which also reads as user-chosen: the safe
+    /// side, since a typed name is never replaced.
+    public var locationNameIsAuto: Bool
+
     public init(
         latitude: Double,
         longitude: Double,
@@ -48,7 +57,8 @@ public struct LocationTrigger: Codable, Equatable, Sendable {
         triggerOnArrival: Bool,
         locationName: String? = nil,
         alarmEnabled: Bool = true,
-        isDone: Bool = false
+        isDone: Bool = false,
+        locationNameIsAuto: Bool = false
     ) {
         self.latitude = latitude
         self.longitude = longitude
@@ -57,6 +67,7 @@ public struct LocationTrigger: Codable, Equatable, Sendable {
         self.locationName = locationName
         self.alarmEnabled = alarmEnabled
         self.isDone = isDone
+        self.locationNameIsAuto = locationNameIsAuto
     }
 
     // Explicit Codable so the additive `alarmEnabled` / `isDone` can carry decoding
@@ -64,6 +75,7 @@ public struct LocationTrigger: Codable, Equatable, Sendable {
     // missing the keys).
     enum CodingKeys: String, CodingKey {
         case latitude, longitude, radiusMetres, triggerOnArrival, locationName, alarmEnabled, isDone
+        case locationNameIsAuto
     }
 
     public init(from decoder: Decoder) throws {
@@ -75,6 +87,7 @@ public struct LocationTrigger: Codable, Equatable, Sendable {
         self.locationName = try c.decodeIfPresent(String.self, forKey: .locationName)
         self.alarmEnabled = try c.decodeIfPresent(Bool.self, forKey: .alarmEnabled) ?? true
         self.isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
+        self.locationNameIsAuto = try c.decodeIfPresent(Bool.self, forKey: .locationNameIsAuto) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -86,5 +99,7 @@ public struct LocationTrigger: Codable, Equatable, Sendable {
         try c.encodeIfPresent(locationName, forKey: .locationName)
         try c.encode(alarmEnabled, forKey: .alarmEnabled)
         try c.encode(isDone, forKey: .isDone)
+        // Written only when true, so a place reminder without it keeps its bytes.
+        if locationNameIsAuto { try c.encode(true, forKey: .locationNameIsAuto) }
     }
 }
