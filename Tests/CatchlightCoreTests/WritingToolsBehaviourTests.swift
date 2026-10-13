@@ -2,7 +2,7 @@
 //  WritingToolsBehaviourTests.swift
 //  CatchlightCoreTests
 //
-//  D-246. The switch itself is trivial; what these guard is the ONE property that
+//  The switch itself is trivial; what these guard is the ONE property that
 //  matters — that it fails CLOSED. Writing Tools reached the editor by inheritance
 //  rather than by choice, so every path that does not explicitly say "on" must
 //  resolve to Off, including the paths nobody thought about: a missing key, a value

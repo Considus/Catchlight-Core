@@ -51,7 +51,7 @@ public enum SpotlightConstants {
     public static let userInfoTakeIDKey = "takeID"
 }
 
-// MARK: - Exposure level (user setting — Settings › Security, D-110)
+// MARK: - Exposure level (user setting — Settings › Security)
 
 /// How much of a Take iOS may index for system search. Escalating:
 ///   `.none`      — nothing is indexed (default).

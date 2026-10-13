@@ -2,8 +2,8 @@
 //  WritingToolsBehaviour.swift
 //  CatchlightCore
 //
-//  The user's choice of how much of Apple's Writing Tools the Take editor offers
-//  (D-246). Pure model: no UIKit here, so Core stays testable and the mapping to
+//  The user's choice of how much of Apple's Writing Tools the Take editor offers.
+//  Pure model: no UIKit here, so Core stays testable and the mapping to
 //  `UIWritingToolsBehavior` lives in the app target beside the text views it
 //  configures.
 //

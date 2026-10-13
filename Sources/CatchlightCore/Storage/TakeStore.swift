@@ -92,7 +92,7 @@ public protocol TakeStore: AnyObject {
 
     /// Remove a Take from THIS device without recording a tombstone, but only if it has not
     /// been modified after `cutoff`. Returns false, changing nothing, if it was, or if it is
-    /// not here. Used when another device has turned the Take into a Script (D-315): the
+    /// not here. Used when another device has turned the Take into a Script: the
     /// phone lets it go, and nothing was deleted.
     ///
     /// Check and removal MUST happen inside one critical section, for two reasons. A user

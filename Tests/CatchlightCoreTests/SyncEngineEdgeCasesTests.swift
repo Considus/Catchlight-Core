@@ -244,7 +244,7 @@ final class SyncEngineEdgeCasesTests: XCTestCase {
 
     /// A manifest declaring a version NEWER than this client understands is rejected with
     /// `unsupportedManifestVersion` rather than misread. Was version 3 until 2026-08-11,
-    /// when v3 became the current encrypted format (D-196) — so the guard is now probed at
+    /// when v3 became the current encrypted format — so the guard is now probed at
     /// 4. The version is deliberately readable WITHOUT the key, which is what keeps this
     /// gate reachable on an encrypted manifest at all.
     func testPullInbound_futureManifestVersion_throwsUnsupportedManifestVersion() throws {

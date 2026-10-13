@@ -2,10 +2,10 @@
 //  ChecklistItem.swift
 //  CatchlightCore
 //
-//  A single check item inside a Take (D-034 / D-035).
+//  A single check item inside a Take.
 //
 //  v1.0 STATUS: in active use. A check item is the payload of a `.check`
-//  `TakeBlock`; a Take with one or more of them IS a Task (D-034). The struct is
+//  `TakeBlock`; a Take with one or more of them IS a Task. The struct is
 //  unchanged from when it was forward-compat-only — only its role changed. The
 //  Horizon-2 "promote check item to independent Take" action still targets one
 //  of these cleanly (Roadmap §3, Horizon 2 + Decisions Log).

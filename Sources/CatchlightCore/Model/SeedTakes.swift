@@ -31,7 +31,7 @@ public enum SeedTakes {
                         blocks: [.textLine("A Take is like memory, the place to keep your ideas and it's simply easy. Try touching the Iris on a Take, you'll see how effortless shaping a Take really is. Make it an Obie, task or add a reminder - do all of them or none of them, you're in control.")],
                         isSeeded: true)
 
-        // 2 — Task (NE). A Task is a Take carrying a check item (D-034) — that check
+        // 2 — Task (NE). A Task is a Take carrying a check item — that check
         // block is what lights the Task quadrant. The seed leads with a line of prose
         // (the lesson) then a real sample check item beneath it (owner: "prose + sample
         // tickbox"), so it reads like a genuine task rather than a checkbox on an essay.

@@ -118,7 +118,7 @@ final class SpotlightIndexerTests: XCTestCase {
         XCTAssertNil(attrs.textContent)
     }
 
-    // MARK: - Exposure levels (D-110)
+    // MARK: - Exposure levels
 
     func testMakeItem_noneExposure_returnsNil() {
         let t = Take(blocks: [.textLine("secret body")], isNote: true)

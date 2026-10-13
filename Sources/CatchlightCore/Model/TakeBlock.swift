@@ -2,13 +2,13 @@
 //  TakeBlock.swift
 //  CatchlightCore
 //
-//  One element of a Take's ordered content (D-035). A Take's body is
+//  One element of a Take's ordered content. A Take's body is
 //  `[TakeBlock]`: prose lines (`.text`) and checkbox lines (`.check`) interleave
 //  in any order, the way Apple Notes / Word behave. This replaces the old
 //  `bodyText: String` + separate `checklistItems: [ChecklistItem]`, which could
 //  only ever render "all text, then all checkboxes" — never interleaved.
 //
-//  A Take with at least one `.check` block IS a Task (D-034); there is no
+//  A Take with at least one `.check` block IS a Task; there is no
 //  separate "checklist" concept and no new type. `ChecklistItem` ({id, text,
 //  isComplete}) is reused verbatim as the `.check` payload.
 //

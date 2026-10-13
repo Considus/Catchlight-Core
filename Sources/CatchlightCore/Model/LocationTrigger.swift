@@ -4,7 +4,7 @@
 //
 //  Location-based reminder (geofence) payload (Phase 5 brief §4.4).
 //
-//  WIRED UP since 2026-06-23 (D-081, PR #76): a Take's `locationReminder` drives a
+//  WIRED UP since 2026-06-23: a Take's `locationReminder` drives a
 //  `UNLocationNotificationTrigger` geofence (see `ReminderScheduler.scheduleLocationReminder`).
 //  The model type predated the feature (it has always shipped so the v1.1 wiring needed no
 //  breaking migration), so additive fields use `decodeIfPresent` to keep older payloads

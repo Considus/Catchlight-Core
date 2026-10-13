@@ -2,7 +2,7 @@
 //  ManualOrderTests.swift
 //  CatchlightCoreTests
 //
-//  The manual timeline arrangement (D-195). The gesture needs a device; this is the
+//  The manual timeline arrangement. The gesture needs a device; this is the
 //  arithmetic underneath it, which does not.
 //
 
@@ -48,7 +48,7 @@ final class ManualOrderTests: XCTestCase {
                        "newest-first manual must equal newest-first date order")
     }
 
-    // D-226 (the Storyboard's Obie): `arranged` is handed a Take that has never been
+    // The Storyboard's Obie: `arranged` is handed a Take that has never been
     // in a manual arrangement — the Obie is not on the timeline's arrangeable list.
     // It must be PRESENT (a drop here silently reproduces the invisible-Obie bug in
     // Manual mode only) and sit at its date position among dragged Takes, per the

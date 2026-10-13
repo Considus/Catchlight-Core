@@ -1,7 +1,7 @@
 import XCTest
 @testable import CatchlightCore
 
-/// A Script's kind and page mode on the Take itself ([[D-265]], [[D-326]]). The first test is the
+/// A Script's kind and page mode on the Take itself. The first test is the
 /// one that matters most: a Take's bytes are exactly what they were before these fields existed,
 /// so nothing an older client or the phone writes or reads changes.
 final class TakeKindTests: XCTestCase {
@@ -48,7 +48,7 @@ final class TakeKindTests: XCTestCase {
         XCTAssertEqual(String(data: try PlatformJSON.encode(explicit), encoding: .utf8), golden)
 
         var script = fixture(kind: ManifestEntry.Kind.script, pageMode: Take.PageMode.usLetter)
-        script.kind = ManifestEntry.Kind.take       // Script → Take ([[D-313]]): a change of kind only
+        script.kind = ManifestEntry.Kind.take       // Script → Take: a change of kind only
         script.pageMode = Take.PageMode.continuous
         XCTAssertNil(script.kind)
         XCTAssertNil(script.pageMode)

@@ -1,6 +1,6 @@
 //
 //  TakeExporterTests.swift
-//  CatchlightCoreTests — Task 6.22 / D-035
+//  CatchlightCoreTests — Task 6.22
 //
 //  Pins the export format defined in `App_Store_Connect_Decisions_v1.0.md §5`.
 //  These tests are deliberately literal — they string-compare the full payload
@@ -9,7 +9,7 @@
 //  bell glyph, blank-line spacing). Any change here is a format change and
 //  must trace back to an explicit decision update.
 //
-//  Under D-035 the body is rendered from `blocks`: prose lines as text, check
+//  The body is rendered from `blocks`: prose lines as text, check
 //  items as `- [ ]` / `- [x]`.
 //
 
@@ -58,7 +58,7 @@ final class TakeExporterTests: XCTestCase {
                         isNote: true)
         let out = TakeExporter.export([take], exportedAt: exportedAt)
         // The VISIBLE Markdown is byte-exact and unchanged; the lossless data block
-        // (D-104) follows it, so assert the human portion as a prefix.
+        // follows it, so assert the human portion as a prefix.
         let expectedVisible = """
         ---
         exported: 2026-06-09T14:32:00Z

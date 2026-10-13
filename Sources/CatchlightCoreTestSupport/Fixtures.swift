@@ -13,7 +13,7 @@ extension Take {
     /// Test sugar for the sync, store and conflict suites, which only need to
     /// give a Take some body text and read it back. They don't care about the
     /// block structure. The production `primaryText` bridge was retired when the
-    /// block editor landed (D-035 / Phase 2); this mirrors its old semantics
+    /// block editor landed; this mirrors its old semantics
     /// (first prose block, inserted at the front if none) so those tests stay
     /// about sync, not content shape.
     public var primaryText: String {
@@ -38,7 +38,7 @@ extension Take {
 
 public enum TestFixtures {
     /// A representative Take exercising every populated v1.0 field. Interleaved
-    /// block content: a prose line plus two check items (so it is a Task — D-034 —
+    /// block content: a prose line plus two check items (so it is a Task,
     /// but incomplete, one item unticked).
     public static func richTake(id: UUID = UUID()) -> Take {
         Take(

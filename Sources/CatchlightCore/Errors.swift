@@ -21,7 +21,7 @@ public enum CryptoError: Error, Equatable, Sendable {
     case malformedCiphertext
     /// RESERVED — currently never thrown (2026-07-01). Kept for future key-
     /// derivation failure paths; the PIN PBKDF2 it originally described was
-    /// removed with the in-app PIN (D-042).
+    /// removed with the in-app PIN.
     case kdfFailed(String)
     /// A BIP-39 mnemonic failed checksum/wordlist validation.
     case invalidMnemonic(String)

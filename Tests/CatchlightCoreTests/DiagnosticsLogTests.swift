@@ -2,7 +2,7 @@
 //  DiagnosticsLogTests.swift
 //  CatchlightCoreTests
 //
-//  The content-free diagnostics log (D-085): append + cap, user-facing filtering (newest-first),
+//  The content-free diagnostics log: append + cap, user-facing filtering (newest-first),
 //  plain-text export, clear, and persistence across instances.
 //
 

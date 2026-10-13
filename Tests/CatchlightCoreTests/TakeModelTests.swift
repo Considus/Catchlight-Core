@@ -1,6 +1,6 @@
 //
 //  TakeModelTests.swift
-//  CatchlightCoreTests — Task 7.2 / D-035
+//  CatchlightCoreTests — Task 7.2
 //
 //  Behaviour-level coverage for the `Take` entity itself: default initialisation,
 //  Equatable semantics (synthesised — whole-struct, NOT id-only), the
@@ -49,7 +49,7 @@ final class TakeModelTests: XCTestCase {
         XCTAssertEqual(Set(ids).count, ids.count, "Take() must produce a fresh UUID each time")
     }
 
-    // MARK: - Derived properties (D-035)
+    // MARK: - Derived properties
 
     func testTake_isTask_trueWhenAnyCheckBlock() {
         let note = Take(blocks: [.textLine("just prose")])
@@ -155,7 +155,7 @@ final class TakeModelTests: XCTestCase {
         XCTAssertEqual(take.checkItems.map(\.isComplete), [false, true])
     }
 
-    // MARK: - Block editing (D-035 / Phase 2)
+    // MARK: - Block editing
 
     func testSetTask_keepsProseAndAddsEmptyEntry() {
         // Owner 2026-06-17: Task no longer eats existing prose. The line stays as
