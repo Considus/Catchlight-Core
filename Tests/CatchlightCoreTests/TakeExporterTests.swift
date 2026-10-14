@@ -2,7 +2,7 @@
 //  TakeExporterTests.swift
 //  CatchlightCoreTests — Task 6.22
 //
-//  Pins the export format defined in `App_Store_Connect_Decisions_v1.0.md §5`.
+//  Pins the export format.
 //  These tests are deliberately literal — they string-compare the full payload
 //  rather than parsing it, because downstream importers will rely on the exact
 //  byte layout (frontmatter delimiters, the `· ✓ Complete` separator, the
