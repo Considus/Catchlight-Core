@@ -7,7 +7,7 @@
 //  inbound sync the manifest signature is verified FIRST; then each downloaded
 //  blob is verified against its per-entry HMAC before any decryption is attempted.
 //
-//  v3 (owner 2026-08-11, D-196) — THE BODY IS NOW ENCRYPTED. What is on disk:
+//  v3 — THE BODY IS ENCRYPTED. What is on disk:
 //
 //      {
 //        "version": 3,
@@ -15,7 +15,7 @@
 //        "manifestHmac": "<hex HMAC of the envelope body>"
 //      }
 //
-//  and the sealed body inside it is the same index as before (a Script's entry, D-315,
+//  and the sealed body inside it is the same index as before (a Script's entry
 //  carries `kind`; a Take's never does, so its bytes are unchanged):
 //
 //      {
@@ -57,8 +57,8 @@ import Crypto
 /// One synced item in the manifest.
 ///
 /// `kind` says what the item IS, so a device can skip what it does not hold without
-/// downloading or decrypting it (D-315). A Take is the absence of a kind; a Script, the
-/// long-form Take written on the desktop and iPad (D-265), is `"script"`. The phone holds
+/// downloading or decrypting it. A Take is the absence of a kind; a Script, the
+/// long-form Take written on the desktop and iPad, is `"script"`. The phone holds
 /// Takes only: it never fetches a non-Take blob, and it never changes an entry's kind.
 ///
 /// The field is written ONLY for a non-Take, so every Take entry encodes byte-for-byte as
@@ -122,8 +122,7 @@ public struct ManifestTombstone: Codable, Equatable, Sendable {
     }
 }
 
-/// The v3 on-disk form of `catchlight-manifest.json` — an ENCRYPTED envelope (owner
-/// 2026-08-11, D-196).
+/// The v3 on-disk form of `catchlight-manifest.json` — an ENCRYPTED envelope.
 ///
 /// Up to v2 the manifest was plain JSON. It was HMAC-signed, so nobody could tamper with
 /// it, but signing is not encryption: anyone with folder access — the cloud provider, a

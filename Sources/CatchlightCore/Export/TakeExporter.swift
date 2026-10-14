@@ -6,7 +6,7 @@
 //  so it has no UIKit dependency and can be unit-tested without a host app —
 //  the export path is "your data is yours, always," and that promise has to
 //  hold even when StoreKit / iCloud / the network are unavailable. The output
-//  format is pinned by `App_Store_Connect_Decisions_v1.0.md §5` and must not
+//  format is pinned and must not
 //  drift without an explicit decision update; downstream import tools (and
 //  future per-Take export in v1.1) will read what this writes today.
 //
@@ -66,7 +66,7 @@ public enum TakeExporter {
             out += "\(body(for: take))\n"
         }
 
-        // Lossless round-trip (D-104): a non-empty export appends ONE hidden data block
+        // Lossless round-trip: a non-empty export appends ONE hidden data block
         // carrying each Take's exact timestamps / Obie / reminders, so import can
         // rebuild the individual Takes rather than collapse the file into one. It is an
         // HTML comment (invisible in any rendered Markdown). Metadata order matches the
@@ -95,7 +95,7 @@ public enum TakeExporter {
     }
 
     /// Render a Take's blocks in order: prose lines as-is, check items as
-    /// `- [ ]` / `- [x]` (D-035). One block per line.
+    /// `- [ ]` / `- [x]`. One block per line.
     static func body(for take: Take) -> String {
         take.blocks.map { block in
             switch block {

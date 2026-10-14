@@ -1,6 +1,6 @@
 //
 //  TakeBlockTests.swift
-//  CatchlightCoreTests — D-035
+//  CatchlightCoreTests
 //
 //  Codable + identity coverage for the block content model: `TextBlock`,
 //  `TakeBlock` (the tagged-object wire format), and the interleaved round trip

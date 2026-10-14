@@ -2,7 +2,7 @@
 //  TextBlock.swift
 //  CatchlightCore
 //
-//  A line/paragraph of prose inside a Take's ordered block list (D-035).
+//  A line/paragraph of prose inside a Take's ordered block list.
 //  Carries a stable `id` so the block editor can diff, animate, and reorder
 //  rows, and so a future block can be addressed independently. The sibling
 //  block type is `ChecklistItem` (a check line); the two interleave freely as

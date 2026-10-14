@@ -1,6 +1,6 @@
 //
 //  ManifestEncryptionTests.swift
-//  CatchlightCoreTests — manifest v3 / blob v2 (owner 2026-08-11, D-196)
+//  CatchlightCoreTests — manifest v3 / blob v2
 //
 //  The point of the change is NEGATIVE — certain things must no longer appear in the cloud
 //  folder — so most of these assert absence in the written bytes. A round-trip test alone

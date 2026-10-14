@@ -2,12 +2,12 @@
 //  SyncScriptEntryTests.swift
 //  CatchlightCoreTests
 //
-//  D-315: the manifest marks each entry as a Take or a Script, and the phone holds Takes
-//  only. Scripts are written on the desktop and iPad (D-265); the phone must never fetch
+//  The manifest marks each entry as a Take or a Script, and the phone holds Takes
+//  only. Scripts are written on the desktop and iPad; the phone must never fetch
 //  one, never drop one from the manifest, and never change an entry's kind. When another
 //  device turns a Take the phone holds into a Script, the phone lets it go WITHOUT a
-//  tombstone, because nothing was deleted (D-313, and owner 2026-10-01: no conversion on
-//  the phone itself).
+//  tombstone, because nothing was deleted. The phone itself
+//  never converts one.
 //
 //  Tests cross the public seams only: ManifestEntry's encoding, and SyncEngine's
 //  pullInbound / pushOutbound against an in-memory store and folder.
@@ -224,7 +224,7 @@ final class SyncScriptEntryTests: XCTestCase {
         XCTAssertEqual(try phone.take(id: script.id)?.primaryText, script.primaryText)
     }
 
-    // MARK: - The phone never deletes a Script (D-325)
+    // MARK: - The phone never deletes a Script
 
     /// The phone deleted the Take while offline; meanwhile the Mac turned it into a Script and
     /// wrote into it. On the phone the Take is simply gone. The deletion must not reach the

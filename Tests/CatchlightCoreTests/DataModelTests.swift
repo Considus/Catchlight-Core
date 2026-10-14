@@ -198,8 +198,8 @@ final class DataModelTests: XCTestCase {
         XCTAssertEqual(decoded.appVersion, "0.9.0")
     }
 
-    // Take payloads carry the schemaVersion stamp; v3 (D-195) added `manualOrder` to
-    // the v2 (D-035) block model.
+    // Take payloads carry the schemaVersion stamp; v3 added `manualOrder` to
+    // the v2 block model.
     func testTakeJSONIncludesSchemaVersion() throws {
         let take = TestFixtures.richTake()
         let json = String(data: try PlatformJSON.encode(take), encoding: .utf8)!

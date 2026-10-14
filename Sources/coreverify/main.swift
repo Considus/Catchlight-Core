@@ -136,7 +136,7 @@ do {
     var t = Take(blocks: [.checkItem("x", isComplete: true)]); t.setTask(false); t.normaliseActivityFloor()
     check("Note is the floor (re-asserts; completion cleared)", t.isNote && !t.isComplete)
 
-    // Derived block props (D-035).
+    // Derived block props.
     let taskTake = Take(blocks: [.textLine("prose"), .checkItem("a"), .checkItem("b", isComplete: true)])
     check("isTask derived from check blocks; isComplete needs all ticked; plainText joins",
           taskTake.isTask && !taskTake.isComplete && taskTake.plainText == "prose\na\nb")
@@ -229,7 +229,7 @@ do {
         let manifestData = try cloud.read(Manifest.fileName)
         let metaData = try cloud.read("catchlight-account-metadata.json")
         let blob = try CloudBlob.parse(blobData!)
-        // v2 (D-196): the envelope carries ONLY the version and the ciphertext. `uuid` and
+        // v2: the envelope carries ONLY the version and the ciphertext. `uuid` and
         // `modified` are no longer written — the uuid is already the filename and the timestamp
         // had no readers, so both were plaintext metadata for nothing.
         check("Outbound writes .clk envelope (JSON, v2, has ciphertext)",
@@ -302,7 +302,7 @@ do {
         let afterDelete = try storeB.take(id: take.id)
         check("Inbound deletion from another device applied locally", report.deletedLocally == [take.id] && afterDelete == nil)
     }
-    // Scripts (D-315): the phone never fetches one, carries its entry forward untouched,
+    // Scripts: the phone never fetches one, carries its entry forward untouched,
     // and lets a Take go without a tombstone when another device turns it into a Script.
     do {
         let k = keys(); let cloud = InMemoryCloudFolder()

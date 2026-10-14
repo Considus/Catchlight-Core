@@ -38,7 +38,7 @@ extension TestFixtures {
     }
 }
 
-// MARK: - Manifest helpers for the v3 encrypted format (owner 2026-08-11, D-196)
+// MARK: - Manifest helpers for the v3 encrypted format
 //
 // The manifest on disk is now an encrypted `ManifestEnvelope`, so a test can no longer
 // `Manifest.parse` what the engine wrote. These two are the test-side mirror of

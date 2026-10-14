@@ -3,8 +3,8 @@
 //  CatchlightCoreTests
 //
 //  A device made with `holdsScripts` (the desktop, later the iPad) syncs Scripts as it syncs
-//  Takes, while the phone keeps skipping them (D-315, D-325). Approved 2026-10-05 in
-//  Script_Sync_Proposal_v1.0.md. Two "Macs" and a "phone" share one in-memory folder.
+//  Takes, while the phone keeps skipping them.
+//  Two "Macs" and a "phone" share one in-memory folder.
 //
 
 import XCTest
@@ -84,7 +84,7 @@ final class SyncScriptsHeldTests: XCTestCase {
         XCTAssertEqual(try entry(take.id)?.kind, ManifestEntry.Kind.script)
         XCTAssertTrue(try Manifest.readEncrypted(from: cloud, keys: keys).tombstones.isEmpty, "no deletion record")
 
-        // The phone lets its copy go, without a tombstone (D-315).
+        // The phone lets its copy go, without a tombstone.
         let report = try sync(phone, at: t0.addingTimeInterval(12))
         XCTAssertEqual(report.deletedLocally, [take.id])
         XCTAssertNil(try phone.store.take(id: take.id))
@@ -231,7 +231,7 @@ final class SyncScriptsHeldTests: XCTestCase {
     }
 
     /// Local review: the phone still shows the Take a non-holding device made a Script. Deleting
-    /// it there deletes the Take only; the Script stays (D-325).
+    /// it there deletes the Take only; the Script stays.
     func testDeletingTheOldTakeElsewhereKeepsAScriptWhereScriptsAreNotHeld() throws {
         let mac = Device(holdsScripts: false), phone = Device(holdsScripts: false)
         var take = Take(createdAt: t0, modifiedAt: t0, blocks: [.text(TextBlock(text: "Captured"))])

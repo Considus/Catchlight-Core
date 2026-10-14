@@ -22,7 +22,7 @@
 import Foundation
 
 public struct CloudBlob: Codable, Equatable, Sendable {
-    /// v2 (owner 2026-08-11, D-196) — `uuid` and `modified` are no longer WRITTEN.
+    /// v2 — `uuid` and `modified` are no longer WRITTEN.
     ///
     /// Both were plaintext metadata that nothing ever read back: the pull path takes the
     /// uuid from the manifest entry (and the filename), and takes the modification time

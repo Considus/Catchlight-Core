@@ -7,7 +7,7 @@
 //  combination of Note / Task / Reminder / Obie is valid simultaneously, and Note
 //  is the floor — it re-asserts if every other type is removed.
 //
-//  CONTENT IS BLOCKS (D-035). A Take's body is an ordered `[TakeBlock]`: prose
+//  CONTENT IS BLOCKS. A Take's body is an ordered `[TakeBlock]`: prose
 //  lines (`.text`) and checkbox lines (`.check`) interleave in any order, the way
 //  Apple Notes / Word behave. This replaced the old `bodyText: String` plus the
 //  separate `checklistItems: [ChecklistItem]` (which could only render
@@ -33,8 +33,8 @@ import Foundation
 
 public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// Version of the encrypted payload schema. v3 (2026-08-14) adds `manualOrder`
-    /// (D-195 timeline re-ordering). v2 (2026-06-13) is the block content model
-    /// (D-035); v1 carried `bodyText` + `checklistItems`. Old payloads without the
+    /// (timeline re-ordering). v2 (2026-06-13) is the block content model;
+    /// v1 carried `bodyText` + `checklistItems`. Old payloads without the
     /// field decode as version 1 and are upgraded to blocks in `init(from:)`.
     /// Synthesised Codable offers no decoding defaults, so future fields MUST be
     /// added with `decodeIfPresent` + a default below.
@@ -43,7 +43,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// with `manualOrder == nil` (which means "sits at its date position", so the
     /// timeline is unchanged), and a v3 payload decoded by an older build simply
     /// ignores the unknown key. That is why the version is not a gate anywhere —
-    /// unlike the manifest version, which fails closed (D-196).
+    /// unlike the manifest version, which fails closed.
     public static let currentSchemaVersion = 3
     public var schemaVersion: Int
 
@@ -61,13 +61,13 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         didSet { modifiedAt = ISO8601.truncateToMilliseconds(modifiedAt) }
     }
 
-    // MARK: - Content (D-035)
+    // MARK: - Content
 
     /// Ordered content: prose lines and checkbox lines interleaved. The single
     /// source of truth for the Take's body, its Task-ness, and its completion.
     public var blocks: [TakeBlock]
 
-    /// Structured content marker. `"blocks/v2"` since D-035 — the old
+    /// Structured content marker. `"blocks/v2"` — the old
     /// `"plain"` vs `"markdown"` gate is moot now the content is structured.
     public var contentType: String
 
@@ -77,8 +77,8 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// removed (UX Session Decisions §6, "Note is the floor").
     public var isNote: Bool
 
-    /// Derived: a Take is a **Task** iff it contains at least one check block
-    /// (D-034). Never stored — computed from `blocks` so it can never drift.
+    /// Derived: a Take is a **Task** iff it contains at least one check block.
+    /// Never stored — computed from `blocks` so it can never drift.
     public var isTask: Bool {
         blocks.contains { $0.isCheck }
     }
@@ -109,9 +109,8 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// Time-based reminder. `nil` in v1.0 if not set.
     public var timeReminder: TimeReminder?
 
-    /// Location-based reminder — the Take's "where" (WIRED since D-081,
-    /// 2026-06-23; this doc previously said "always nil in v1.0" — corrected
-    /// 2026-07-02). Either/or with `timeReminder` at the fan (owner 2026-06-24),
+    /// Location-based reminder — the Take's "where". Either/or with
+    /// `timeReminder` at the fan (owner 2026-06-24),
     /// and a full state-system peer since the place/time parity pass
     /// (2026-07-01): wedge, card border, Done, and `isDone` on the trigger.
     public var locationReminder: LocationTrigger?
@@ -152,7 +151,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// Make/Remove Important and the editor bar disables its Important button on this.
     public var canChangeImportant: Bool { !isObie }
 
-    // MARK: - Manual timeline order (D-195)
+    // MARK: - Manual timeline order
 
     /// This Take's position in the MANUAL timeline arrangement, or `nil` for a Take
     /// that has never been dragged (schema v3, 2026-08-14).
@@ -175,8 +174,8 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// flipping it twice returns the arrangement exactly (owner 2026-08-14).
     public var manualOrder: Double?
 
-    /// What this item IS, the same value its manifest entry carries ([[D-315]], [[D-326]]): nil for a
-    /// Take, `ManifestEntry.Kind.script` for a Script (a long-form Take, [[D-265]]). A copy lives in
+    /// What this item IS, the same value its manifest entry carries: nil for a
+    /// Take, `ManifestEntry.Kind.script` for a Script (a long-form Take). A copy lives in
     /// the item's own encrypted file so the file explains itself without its manifest (a backup,
     /// a Markdown export, which carries it in its data block). A String rather than an enum so a kind from a newer client survives a round trip
     /// here untouched. A Take is the ABSENCE of a kind, never "take", so one item has one encoding
@@ -185,15 +184,15 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         didSet {
             if kind == ManifestEntry.Kind.take { kind = nil }
             // A page mode belongs to a Script: an item that becomes a Take drops it, so a Take's
-            // file never carries a Script field ([[D-326]]).
+            // file never carries a Script field.
             if kind == nil { pageMode = nil }
         }
     }
 
-    /// How a Script is laid out: continuous (the default, stored as nil), A4 or US Letter
-    /// ([[D-314]]). A PRESENTATION attribute, not data ([[D-265]]): a phone renders continuous
+    /// How a Script is laid out: continuous (the default, stored as nil), A4 or US Letter.
+    /// A PRESENTATION attribute, not data: a phone renders continuous
     /// whatever it says. It lives inside the item's file only, never in the manifest, because a
-    /// phone rebuilds every manifest entry it writes and would drop it ([[D-326]]). A String for
+    /// phone rebuilds every manifest entry it writes and would drop it. A String for
     /// the same forward-compatibility reason as `kind`.
     ///
     /// Only a Script has one: setting it on a Take keeps nothing, so set `kind` first when making
@@ -208,7 +207,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         public static let usLetter = "letter"
     }
 
-    /// A Script, the long-form Take written on the desktop and iPad ([[D-265]]).
+    /// A Script, the long-form Take written on the desktop and iPad.
     public var isScript: Bool { kind == ManifestEntry.Kind.script }
 
     public init(
@@ -274,7 +273,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     /// couldn't settle it either — marking the reminder done settles the WHOLE Take, which is
     /// wrong while other items are outstanding.
     ///
-    /// Order is preserved (blocks interleave freely under D-035, so collecting the items to the
+    /// Order is preserved (blocks interleave freely, so collecting the items to the
     /// end would reshuffle the Take). Each maximal RUN of consecutive outstanding items collapses
     /// to one comma-joined line, which is what makes the common "prose, then a list" shape read
     /// as a sentence in a banner instead of a run-on. Prose blocks are untouched — a completed
@@ -317,7 +316,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         return (items.filter(\.isComplete).count, items.count)
     }
 
-    // MARK: - Block editing (the block-stack editor, D-035)
+    // MARK: - Block editing (the block-stack editor)
     //
     // These reshape `blocks` for the editor and the Focus-ring Task Mark. They
     // are pure value mutations so they're unit-tested directly; the editor's
@@ -498,7 +497,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     }
 
     /// Whether the Take reads as "done" — drives the card's grey border + grey text
-    /// (D-044, [[catchlight-take-colour-system]]) and the long-press "Mark as done"
+    /// and the long-press "Mark as done"
     /// toggle. A Take is done when every actionable marker it carries is settled: a
     /// Task with all items ticked AND/OR a reminder ("when" or "where") marked
     /// `isDone`. Only meaningful for a settleable Take (a plain Note is never "done").
@@ -559,7 +558,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         case isSeeded, isImportant
         case manualOrder
         case kind, pageMode
-        // DROPPED in v2 (D-035): `bodyText`, `checklistItems` (now `blocks`), and
+        // DROPPED in v2: `bodyText`, `checklistItems` (now `blocks`), and
         // the formerly-stored `isTask` / `isComplete` (now derived). Old payloads
         // carrying those keys are upgraded in `init(from:)`; unknown keys on
         // decode are ignored. `sequenceIds` was removed 2026-06-10 (filter-based
@@ -640,7 +639,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
         // Omitted entirely when nil, so a Take nobody has dragged still serialises
         // byte-identically to its v2 form apart from the version number.
         try c.encodeIfPresent(manualOrder, forKey: .manualOrder)
-        // Omitted when nil, as `manualOrder` is: a Take's bytes never change ([[D-326]]).
+        // Omitted when nil, as `manualOrder` is: a Take's bytes never change.
         try c.encodeIfPresent(kind, forKey: .kind)
         try c.encodeIfPresent(pageMode, forKey: .pageMode)
     }

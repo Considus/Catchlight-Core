@@ -2,7 +2,7 @@
 //  DiagnosticsLog.swift
 //  CatchlightCore
 //
-//  A content-free, append-only, capped diagnostics log (owner 2026-06-28, D-085). Catchlight
+//  A content-free, append-only, capped diagnostics log. Catchlight
 //  ships with NO analytics and NO crash reporting by design, so this is the diagnostic
 //  channel: it records the same non-blocking notices the user sees (sync / storage / conflict /
 //  quarantine) plus a few internal breadcrumbs, so a user can review past notices (Notice
@@ -58,7 +58,7 @@ public final class DiagnosticsLog: @unchecked Sendable {
     /// Budgets are kept SEPARATE per class (see `maxLifecycleEntries`) and trimmed independently.
     /// A single shared pool cannot work once breadcrumbs are chatty: `lifecycle` entries are
     /// frequent and notices are rare, so the breadcrumbs would evict every sync/storage/conflict/
-    /// quarantine notice within minutes and Notice History (D-085) would simply read empty.
+    /// quarantine notice within minutes and Notice History would simply read empty.
     public static let maxEntries = 200
 
     /// Breadcrumbs get their own budget so they can never starve the notices above. Bigger, because
@@ -247,7 +247,7 @@ public final class DiagnosticsLog: @unchecked Sendable {
     /// Remove only the USER-FACING notices (the Notice History rows), keeping the
     /// lifecycle breadcrumbs (2026-07-01). Notice History's Clear previously wiped
     /// the whole file — a user tidying stale banners unknowingly destroyed the
-    /// "Export diagnostics" content they'd attach to a bug report (the D-085
+    /// "Export diagnostics" content they'd attach to a bug report (the
     /// one-backbone design cuts both ways).
     public func clearUserFacing() {
         lock.lock(); defer { lock.unlock() }

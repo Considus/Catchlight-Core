@@ -1,6 +1,6 @@
 //
 //  TakeTransferMetadata.swift
-//  CatchlightCore — lossless Markdown round-trip (D-104)
+//  CatchlightCore — lossless Markdown round-trip
 //
 //  The machine-readable per-Take metadata embedded in a Markdown export's trailing
 //  data block, so an export round-trips losslessly on import. The visible Markdown
@@ -45,7 +45,7 @@ struct TakeTransferMetadata: Codable {
     /// hand. `nil` means the Take has no manual position, which is the normal case.
     var manualOrder: Double?
 
-    /// A Script's kind and page mode ([[D-326]]), so an exported Script imports as a Script.
+    /// A Script's kind and page mode, so an exported Script imports as a Script.
     /// Optional for the same reason as the two above, and nil on every Take, so an export of
     /// Takes is byte for byte what it was before these existed (the synthesised encoder omits
     /// a nil optional).

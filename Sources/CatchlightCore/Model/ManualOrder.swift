@@ -2,7 +2,7 @@
 //  ManualOrder.swift
 //  CatchlightCore
 //
-//  The MANUAL timeline arrangement (D-195). The timeline can be arranged by Date or
+//  The MANUAL timeline arrangement. The timeline can be arranged by Date or
 //  by hand; this is the sort and the drag arithmetic behind the second one. Lives in
 //  Core, not the app target, so the ordering rules are unit-testable without a
 //  simulator — the gesture needs a device, the maths does not.

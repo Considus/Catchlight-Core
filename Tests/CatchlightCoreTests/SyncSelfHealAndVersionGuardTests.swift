@@ -146,7 +146,7 @@ final class SyncSelfHealAndVersionGuardTests: XCTestCase {
                                 hmac: signer.blobHMACHex(futureBytes))
                 : entry
         }
-        // v3 (D-196): re-seal as well as re-sign, so the engine still reads an encrypted
+        // v3: re-seal as well as re-sign, so the engine still reads an encrypted
         // manifest and the ONLY thing wrong with the folder is the blob's version number.
         let resigned = try signer.sign(try manifest.sealed(with: k.manifestEncryptionKey()))
         try cloud.writeAtomically(try resigned.serialise(), to: Manifest.fileName)
@@ -197,7 +197,7 @@ final class SyncSelfHealAndVersionGuardTests: XCTestCase {
         XCTAssertTrue(manifest.tombstones.contains { $0.uuid == take.id })
     }
 
-    // MARK: - Stale manifest entry (2026-09-03, D-250)
+    // MARK: - Stale manifest entry (2026-09-03)
 
     /// THE REPRODUCTION. A Take whose cloud copy is STALE — the manifest entry
     /// records an older `modified` than the local Take carries — must be re-uploaded,

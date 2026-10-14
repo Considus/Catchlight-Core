@@ -44,7 +44,7 @@ final class SyncEngineTests: XCTestCase {
         let blob = try CloudBlob.parse(blobData)
         XCTAssertEqual(blob.version, CloudBlob.currentVersion)
         XCTAssertNotNil(blob.ciphertext)
-        // v2 (D-196): the uuid and modification time are NO LONGER written. The uuid is
+        // v2: the uuid and modification time are NO LONGER written. The uuid is
         // already the filename and the timestamp had no readers, so both were pure leak.
         XCTAssertNil(blob.uuid, "the envelope must not repeat the uuid in plaintext")
         XCTAssertNil(blob.modified, "the envelope must not carry a plaintext timestamp")

@@ -187,7 +187,7 @@ final class SyncMutationGapTests: XCTestCase {
         XCTAssertEqual(try Manifest.readEncrypted(from: cloud, keys: keys).tombstones.map(\.uuid), [doomed.id])
     }
 
-    // MARK: - A Take that became a Script elsewhere (D-315)
+    // MARK: - A Take that became a Script elsewhere
 
     private func remarkAsScript(_ id: UUID, modified: Date, in cloud: CloudFolder, keys: KeyHierarchy) throws {
         var manifest = try Manifest.readEncrypted(from: cloud, keys: keys)
