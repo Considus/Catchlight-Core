@@ -6,7 +6,7 @@ For a coding agent working in this repo. People start with [`README.md`](README.
 
 - **Leave the frozen contract bytes in `Sources/CatchlightCore/Crypto/` as they are:** changing one breaks existing data.
 - **Give every change to what is written (a Take field, the manifest, an envelope) a reader for the old shape,** agreed with the apps. Additive optional fields are safe: see `ManifestEntry.kind`, and `Take.kind` / `Take.pageMode`, written only when set so a Take's bytes never change (`TakeKindTests` pins them against a golden).
-- **Ask `holds(_:)` whether this device may read an entry.** `SyncEngine(holdsScripts:)` is off on the phone and on for the desktop; the Script rules are in `SyncEngine.swift`'s doc comments, pinned by `SyncScriptEntryTests` and `SyncScriptsHeldTests`.
+- **Ask `holds(_:)` whether this device may read an entry.** `SyncEngine(holdsScripts:)` is off on the phone and on for the desktop; the Script rules are in `SyncEngine.swift`'s doc comments, pinned by `SyncScriptEntryTests` and `SyncScriptsHeldTests`. A deletion record carries no kind, so with the option off, a Script deleted from the device's own store (the desktop before its Scripts sync) is the app's to keep local (Catchlight-MacOS does, in `App/Sources/Vault/Library.swift`).
 - **Treat `CatchlightCoreTestSupport` (the store contract and shared fixtures) like an API.** Link it only from a test target not hosted in an app: a hosted bundle gets a second CatchlightCore and casts across the copies fail (Catchlight-iOS#309), so iOS keeps its own copy of the contract, matching the pinned tag. Keep its XCTest file inside `#if canImport(XCTest)` so `swift build` works with only the Command Line Tools.
 - **`swift-crypto` is the one dependency,** for Linux and Windows only (`linuxCrypto`). Import crypto as below so Apple builds never link it, and outside the module write `CatchlightCore.CryptoError`, which clashes with swift-crypto's.
 
@@ -33,7 +33,7 @@ Read the test **count**, not the word "passed". On CI (`.github/workflows/ci.yml
 
 To try swift-crypto on a Mac, in a scratch copy: point at a local swift-crypto checkout (`let development = true` in its `Package.swift`), drop `linuxCrypto`'s platform condition, import `Crypto` directly. Never commit that.
 
-`Fuzz/` is a separate, Linux-only libFuzzer package (`Fuzz/README.md`). Pin each crash in `FuzzRegressionTests`, in the PR with its fix.
+`Fuzz/` is a separate, Linux-only libFuzzer package (`Fuzz/README.md`). Pin each crash in `FuzzRegressionTests`, in the same PR as its fix, because a trap kills the whole test run.
 
 Take expected values from outside the code under test (a known-good literal, worked example, spec or captured fixture), and test at public seams.
 
