@@ -78,7 +78,7 @@ final class TakeRoundTripIdentityTests: XCTestCase {
     func testMaximallyPopulatedTakeRoundTripsEqual() throws {
         let take = maximalTake()
         XCTAssertEqual(try roundTrip(take), take,
-            "A fully-populated Take did not survive the round trip. Whichever field drifted will make every sync raise a phantom conflict on a single device — see PR #79 and D-250.")
+            "A fully-populated Take did not survive the round trip. Whichever field drifted will make every sync raise a phantom conflict on a single device.")
     }
 
     /// `manualOrder` is a `Double`, and `ManualOrder` produces midpoints, so the
