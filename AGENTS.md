@@ -24,7 +24,7 @@ Stage by explicit path. Never `git add -A` or `git commit -a`. A fresh clone nee
 git config core.hooksPath hooks
 ```
 
-`hooks/pre-commit` refuses commits on `main`; `hooks/commit-msg` refuses Claude attribution footers.
+`hooks/pre-commit` refuses commits on `main`; `hooks/commit-msg` refuses Claude attribution footers and em or en dashes.
 
 ## Build
 
