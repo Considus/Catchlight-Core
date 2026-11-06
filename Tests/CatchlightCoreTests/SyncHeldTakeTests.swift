@@ -93,6 +93,24 @@ final class SyncHeldTakeTests: XCTestCase {
         XCTAssertEqual(try cloudText(id), "edit on B", "B's version stays in the cloud until the user chooses")
     }
 
+    /// The other device's file is unreadable for one pass (cloud provider lag), so the pull
+    /// skips the Take and reports no conflict. A's edit is newer than B's, so only the app's
+    /// hold stops the push uploading it over B's version.
+    func testHeld_whenTheRemoteFileIsUnreadable_aNewerEditIsNotUploaded() throws {
+        let id = try conflictOnA()
+        try edit(storeA, id, "second edit on A", at: 40)
+        let name = "\(id.uuidString).clk"
+        let bVersion = try XCTUnwrap(cloud.read(name))
+        try cloud.delete(name)
+
+        let report = try syncA(50, holding: [id])
+        if try cloud.read(name) == nil { try cloud.write(bVersion, to: name) }
+
+        XCTAssertEqual(report.skipped, [id], "the pull could not read B's file this pass")
+        XCTAssertEqual(report.uploaded, [])
+        XCTAssertEqual(try cloudText(id), "edit on B", "B's version stays in the cloud until the user chooses")
+    }
+
     /// A newer remote version while held refreshes the conflict, and never overwrites A's.
     func testHeld_aNewerRemoteVersion_refreshesTheConflict_andIsNotApplied() throws {
         let id = try conflictOnA()
