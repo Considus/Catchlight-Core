@@ -190,6 +190,35 @@ final class SyncPushBetweenHalvesTests: XCTestCase {
             || conflictsSeen > 0
         XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
     }
+
+    /// Found by reading a TLC convergence trace. No overlapping syncs: A edits offline, B syncs
+    /// (nothing new), A comes back online and syncs, B edits and syncs. B's watermark is the time
+    /// of B's last sync, but A's version carries the time A made the edit, which is earlier, so
+    /// B reads it as unchanged since its last sync, keeps its own edit and uploads it over A's.
+    func testOfflineEditUploadedAfterTheOtherDevicesSyncIsNeverLostSilently() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "offline edit on A", at: 10)   // A is offline
+        var conflictsSeen = try engineB(20).sync().conflicts.count
+        conflictsSeen += try engineA(30).sync().conflicts.count  // A back online
+        XCTAssertEqual(try cloudText(take.id), "offline edit on A", "the setup: A's edit reached the folder")
+
+        try edit(storeB, take.id, "edit on B", at: 40)
+        conflictsSeen += try engineB(41).sync().conflicts.count
+        conflictsSeen += try engineA(50).sync().conflicts.count
+        conflictsSeen += try engineB(51).sync().conflicts.count
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "offline edit on A"
+            || storeB.take(id: take.id)?.primaryText == "offline edit on A"
+            || cloudText(take.id) == "offline edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's offline edit was lost with no conflict shown on either device")
+    }
 }
 
 /// The folder as a device sees it before a file has downloaded: every .clk read finds nothing.
