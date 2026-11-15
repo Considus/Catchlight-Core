@@ -116,6 +116,83 @@ final class SyncPushBetweenHalvesTests: XCTestCase {
             || conflictsSeen > 0
         XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
     }
+
+    /// Found by the TLC model checker with the step-1 fix modelled (FixedPushStep1). The lock is
+    /// advisory: with cloud propagation delay, B cannot see A's lock yet and syncs while A's push
+    /// is between its blob write and its manifest write. Neither push sees the other's change, and
+    /// the later manifest write leaves A's edit with no conflict on either device.
+    func testEditLostWhenTwoPushesPassTheLockTogether() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+
+        var conflictsSeen = 0
+        let folderA = AfterFirstBlobWriteFolder(cloud)
+        folderA.afterFirstBlobWrite = {
+            try? self.edit(self.storeB, take.id, "edit on B", at: 20)
+            let lagged = LockNotYetVisibleFolder(self.cloud)
+            let engineB = TestFixtures.engine(store: self.storeB, cloud: lagged, keys: self.k, deviceId: self.deviceB,
+                                              now: { self.t0.addingTimeInterval(21) })
+            let report = try? engineB.sync()
+            XCTAssertEqual(report?.pushDeferred, false, "B's push must pass the lock for this race")
+            conflictsSeen += report?.conflicts.count ?? 0
+        }
+        let engineAInPush = TestFixtures.engine(store: storeA, cloud: folderA, keys: k, deviceId: deviceA,
+                                                now: { self.t0.addingTimeInterval(15) })
+        conflictsSeen += try engineAInPush.sync().conflicts.count
+        for at in stride(from: 40.0, through: 60.0, by: 10.0) {
+            conflictsSeen += try engineB(at).sync().conflicts.count
+            conflictsSeen += try engineA(at + 1).sync().conflicts.count
+        }
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "edit on A"
+            || storeB.take(id: take.id)?.primaryText == "edit on A"
+            || cloudText(take.id) == "edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
+    }
+}
+
+/// Runs `afterFirstBlobWrite` once, just after the first .clk write: inside a push, before its
+/// manifest write.
+private final class AfterFirstBlobWriteFolder: CloudFolder {
+    private let base: CloudFolder
+    var afterFirstBlobWrite: (() -> Void)?
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? { try base.read(name) }
+    func write(_ data: Data, to name: String) throws {
+        try base.write(data, to: name)
+        if name.hasSuffix(".clk"), let hook = afterFirstBlobWrite {
+            afterFirstBlobWrite = nil
+            hook()
+        }
+    }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
+
+/// The folder as a device sees it before another device's lock file has reached it: the first
+/// read of the lock finds nothing. Everything else, including its own lock read-back, is current.
+private final class LockNotYetVisibleFolder: CloudFolder {
+    private let base: CloudFolder
+    private var hidden = true
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if name == SyncLock.fileName, hidden { hidden = false; return nil }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
 }
 
 /// Runs `beforeFirstBlobRead` once, just before the first .clk read: another device's sync
