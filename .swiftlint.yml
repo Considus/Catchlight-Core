@@ -1,0 +1,35 @@
+# SwiftLint runs only the custom rules below, not SwiftLint's own style rules. Each rule is a
+# mistake that found a real defect in review (see the swift-review checklist), with a message
+# that says how to fix the root cause. If a rule fires, fix the cause: do not add a
+# `swiftlint:disable` (that is itself a rule here).
+# Old violations are in .swiftlint-baseline.json; a new one fails CI.
+only_rules:
+  - custom_rules
+
+included:
+  - Sources
+excluded:
+  - .build
+  - Sources/coreverify
+
+custom_rules:
+  try_optional:
+    name: "Swallowed error"
+    regex: '\btry\?'
+    excluded_match_kinds: [comment, comment.mark, doc.comment, string]
+    message: "try? throws the error away. If the user is waiting on this (save, export, import, purchase, restore, search), use try and show the failure: a swallowed error looks like an empty result. If a quiet failure really is right, handle it in a do/catch that logs why, and say so in a comment."
+    severity: error
+
+  swiftlint_disable:
+    name: "SwiftLint switched off"
+    regex: 'swiftlint:(disable|enable)'
+    match_kinds: [comment]
+    message: "Do not switch a rule off with a comment. Fix what the rule found. If the rule is wrong for this code, say so in the PR and file an issue note to change the rule, instead of silencing it."
+    severity: error
+
+  shortcut_without_trigger:
+    name: "SHORTCUT without a trigger"
+    regex: '//\s*SHORTCUT:(?![^\n]*Revisit when)'
+    match_kinds: [comment]
+    message: "A SHORTCUT comment must end with the point where it stops being acceptable: '// SHORTCUT: <what was simplified, and the limit it holds to>. Revisit when <trigger>.' If you cannot name a trigger, do the full job instead of the shortcut."
+    severity: error
