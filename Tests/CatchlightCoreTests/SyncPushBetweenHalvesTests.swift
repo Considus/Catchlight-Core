@@ -203,6 +203,61 @@ final class SyncPushBetweenHalvesTests: XCTestCase {
             || conflictsSeen > 0
         XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
     }
+
+    /// The other device's version is in the manifest but its file can't be read yet (provider
+    /// lag), and that device's clock runs ahead. Push must not upload over a version it cannot
+    /// see, and must keep this edit counted as unsynced: if the watermark moved past it, the next
+    /// pull would read the other version as the only change and write it over this edit.
+    func testEditIsKeptWhenTheOtherDevicesVersionCannotBeReadYet() throws {
+        let folder = HidingFolder(cloud)
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+        try edit(storeB, take.id, "edit on B", at: 30)
+        try engineB(31).sync()
+
+        folder.hideBlobs = true
+        let engineAHidden = TestFixtures.engine(store: storeA, cloud: folder, keys: k, deviceId: deviceA,
+                                                now: { self.t0.addingTimeInterval(27) })
+        var conflictsSeen = try engineAHidden.sync().conflicts.count
+        XCTAssertEqual(try cloudText(take.id), "edit on B",
+                       "A uploaded over B's version without being able to read it")
+
+        folder.hideBlobs = false
+        conflictsSeen += try engineA(40).sync().conflicts.count
+        XCTAssertEqual(try storeA.take(id: take.id)?.primaryText == "edit on A" || conflictsSeen > 0, true,
+                       "A's edit was replaced by B's with no conflict shown")
+        XCTAssertGreaterThan(conflictsSeen, 0, "both devices changed the Take, so A must see a conflict")
+    }
+
+    /// The other side of the rule: an edit made between the pull and the push of one sync, on
+    /// top of the version that pull has just brought in, is this device building on what it has
+    /// seen. It uploads with no conflict, as it did before push learned to check the folder.
+    func testEditOnTopOfAVersionThisSyncPulledUploadsWithoutConflict() throws {
+        let folder = SecondManifestReadFolder(cloud)
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+        try engineA(11).sync()
+
+        // B's sync pulls A's edit; the user edits it before B's push reads the folder.
+        folder.beforeSecondManifestRead = { try? self.edit(self.storeB, take.id, "B builds on A's edit", at: 15) }
+        let engineBWithEdit = TestFixtures.engine(store: storeB, cloud: folder, keys: k, deviceId: deviceB,
+                                                  now: { self.t0.addingTimeInterval(20) })
+        let report = try engineBWithEdit.sync()
+        XCTAssertEqual(report.conflicts.count, 0, "B had seen A's version, so there is nothing to choose between")
+        XCTAssertEqual(try cloudText(take.id), "B builds on A's edit")
+    }
 }
 
 /// A view of a cloud folder that runs a closure once, just before the first read of one file:
@@ -244,6 +299,44 @@ private final class MidPullFolder: CloudFolder {
             beforeFirstBlobRead = nil
             hook()
         }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
+
+/// Runs `beforeSecondManifestRead` once, just before the second manifest read: in `sync()`,
+/// between the pull and the push.
+private final class SecondManifestReadFolder: CloudFolder {
+    private let base: CloudFolder
+    private var manifestReads = 0
+    var beforeSecondManifestRead: (() -> Void)?
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if name == Manifest.fileName {
+            manifestReads += 1
+            if manifestReads == 2 { beforeSecondManifestRead?() }
+        }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
+
+/// Hides every .clk from reads while `hideBlobs` is set: a file the manifest names that the
+/// provider has not delivered yet. Writes go through.
+private final class HidingFolder: CloudFolder {
+    private let base: CloudFolder
+    var hideBlobs = false
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if hideBlobs, name.hasSuffix(".clk") { return nil }
         return try base.read(name)
     }
     func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }

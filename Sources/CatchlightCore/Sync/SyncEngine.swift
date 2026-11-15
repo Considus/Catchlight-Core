@@ -219,6 +219,7 @@ public final class SyncEngine {
         // an edit from elsewhere.
         let entriesBeforePush = entries
         let pulledEntries = pulled?.pulledEntries
+        let pulledUnread = Set(pulled?.skipped ?? [])
         // Set when this push leaves a local edit for the next pull to settle, because another
         // device's version landed after this sync's pull (`landedSincePull`). The watermark
         // then stays where it was (step 7).
@@ -240,10 +241,10 @@ public final class SyncEngine {
                 try forkAndUpload(take, to: cloud, entries: &entries, report: &report)
                 continue
             }
-            // ANOTHER DEVICE PUSHED BETWEEN THIS SYNC'S PULL AND PUSH (2026-11-15). Uploading
-            // would replace its version, which this device's pull never read.
+            // ANOTHER DEVICE'S VERSION THIS SYNC'S PULL NEVER READ (2026-11-15): pushed between
+            // the pull and this push, or listed but not readable yet. Uploading would replace it.
             if let e = entriesBeforePush[take.id],
-               Self.landedSincePull(e, pulled: pulledEntries, over: take) {
+               Self.landedSincePull(e, pulled: pulledEntries, unread: pulledUnread, over: take, since: lastSync) {
                 if Self.hasOwnEdit(take, pulled: pulledEntries) { leftForNextPull = true }
                 continue
             }
@@ -376,7 +377,7 @@ public final class SyncEngine {
                 if let cloudModified, take.modifiedAt <= cloudModified { continue }
                 // Newer here is still not ours to upload over a version that landed after the
                 // pull: as step 1.
-                if Self.landedSincePull(entry, pulled: pulledEntries, over: take) {
+                if Self.landedSincePull(entry, pulled: pulledEntries, unread: pulledUnread, over: take, since: lastSync) {
                     if Self.hasOwnEdit(take, pulled: pulledEntries) { leftForNextPull = true }
                     continue
                 }
@@ -489,14 +490,20 @@ public final class SyncEngine {
         return modified > lastSync
     }
 
-    /// True when the folder's entry for this Take changed after this sync's pull read the folder
-    /// (another device pushed between the halves, or the entry appeared since) and holds a
-    /// different version from this device's. Uploading over it would discard that device's edit
-    /// unseen. Always false for a push that follows no pull: there is nothing to compare with.
+    /// True when the folder's entry for this Take holds a version this sync's pull never read, and
+    /// it differs from this device's: the entry changed after the pull read the folder (another
+    /// device pushed between the halves, or the entry appeared since), or the pull found the file
+    /// not readable yet (`skipped`) and the entry is newer than the last sync. Uploading over it
+    /// would discard that device's edit unseen. Always false for a push that follows no pull:
+    /// there is nothing to compare with. A copy that failed verification is not covered: the
+    /// pull's rules for it (`classifyUnverified`) stand.
     static func landedSincePull(_ entry: ManifestEntry, pulled: [UUID: ManifestEntry]?,
-                                over take: Take) -> Bool {
-        guard let pulled else { return false }
-        return pulled[take.id] != entry && entry.modified != ISO8601.string(from: take.modifiedAt)
+                                unread: Set<UUID>, over take: Take, since lastSync: Date?) -> Bool {
+        guard let pulled, entry.modified != ISO8601.string(from: take.modifiedAt) else { return false }
+        if pulled[take.id] != entry { return true }
+        guard unread.contains(take.id) else { return false }
+        guard let lastSync, let modified = ISO8601.date(from: entry.modified) else { return true }
+        return modified > lastSync
     }
 
     /// True when this device's copy is not simply the version the pull found in the folder, so it
