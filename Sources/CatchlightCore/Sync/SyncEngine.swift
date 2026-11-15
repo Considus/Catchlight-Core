@@ -90,6 +90,10 @@ public struct SyncReport: Equatable, Sendable {
     /// Pull → push hand-off inside `sync()`: Takes applied without the Obie flag because this
     /// device's Obie is held. Push leaves them alone, so the folder keeps the flag.
     var obieFlagHeld: [UUID] = []
+    /// Pull → push hand-off inside `sync()`: the folder's entries as the pull read them. Push
+    /// compares them with the entries it reads itself, to find a version another device wrote
+    /// between the two halves, which this device's pull never saw (see `landedSincePull`).
+    var pulledEntries: [UUID: ManifestEntry]?
     public var uploaded: [UUID] = []         // local versions written to cloud
     /// Live local Takes push's self-heal step did NOT re-upload because this
     /// device was offline longer than the tombstone-retention window (2026-07-01):
@@ -173,9 +177,12 @@ public final class SyncEngine {
     /// - Parameter heldIDs: Takes waiting for the user's choice: the app's queue and the conflicts
     ///   the pull has just reported. Neither version is uploaded until the user picks one: resolving stamps the winner as a fresh edit, and the
     ///   push after that uploads it (R4, owner decision 2026-10-05).
+    /// - Parameter pulled: the report of the pull this push follows, as `sync()` passes it. Push
+    ///   then never uploads over a version another device wrote after that pull read the folder.
     public func pushOutbound(isCancelled: () -> Bool = { false },
                              repairing repairIDs: Set<UUID> = [],
-                             holding heldIDs: Set<UUID> = []) throws -> SyncReport {
+                             holding heldIDs: Set<UUID> = [],
+                             afterPull pulled: SyncReport? = nil) throws -> SyncReport {
         guard let cloud else { throw SyncError.noCloudFolderConfigured }
         try acquireLock(on: cloud)
         // Release on success OR failure — never leave a lock behind.
@@ -211,6 +218,11 @@ public final class SyncEngine {
         // compare against these: an entry this push has just uploaded is our own write, not
         // an edit from elsewhere.
         let entriesBeforePush = entries
+        let pulledEntries = pulled?.pulledEntries
+        // Set when this push leaves a local edit for the next pull to settle, because another
+        // device's version landed after this sync's pull (`landedSincePull`). The watermark
+        // then stays where it was (step 7).
+        var leftForNextPull = false
 
         // 1. Upload changed Takes. Blob HMACs are computed from the bytes in
         //    hand — no read-back.
@@ -226,6 +238,13 @@ public final class SyncEngine {
             // carries an edit it has not seen: keep this edit as a new Take instead.
             if let e = entriesBeforePush[take.id], !holds(e), Self.changedElsewhere(e, since: lastSync) {
                 try forkAndUpload(take, to: cloud, entries: &entries, report: &report)
+                continue
+            }
+            // ANOTHER DEVICE PUSHED BETWEEN THIS SYNC'S PULL AND PUSH (2026-11-15). Uploading
+            // would replace its version, which this device's pull never read.
+            if let e = entriesBeforePush[take.id],
+               Self.landedSincePull(e, pulled: pulledEntries, over: take) {
+                if Self.hasOwnEdit(take, pulled: pulledEntries) { leftForNextPull = true }
                 continue
             }
             try upload(take, to: cloud, entries: &entries, report: &report)
@@ -355,6 +374,12 @@ public final class SyncEngine {
                 // too rather than the Take being stranded behind a value nothing can read.
                 let cloudModified = ISO8601.date(from: entry.modified)
                 if let cloudModified, take.modifiedAt <= cloudModified { continue }
+                // Newer here is still not ours to upload over a version that landed after the
+                // pull: as step 1.
+                if Self.landedSincePull(entry, pulled: pulledEntries, over: take) {
+                    if Self.hasOwnEdit(take, pulled: pulledEntries) { leftForNextPull = true }
+                    continue
+                }
                 try upload(take, to: cloud, entries: &entries, report: &report)
             } else {
                 if offlineTooLong, let lastSync, take.modifiedAt <= lastSync {
@@ -389,8 +414,14 @@ public final class SyncEngine {
         }
         try store.purgeTombstones(ids: supersededByEdit + deletionsOfScripts)
 
-        // 7. Watermark — the pre-query timestamp, NOT "now".
-        store.setLastSyncDate(watermark)
+        // 7. Watermark — the pre-query timestamp, NOT "now". Held back while a local edit waits
+        //    for the next pull (steps 1 and 4): advancing it would make that edit look synced,
+        //    and the next pull would see only the other device's side as changed and take it
+        //    over this one, losing the edit with no conflict shown. Held, the next pull finds
+        //    both sides changed since the last sync and reports the conflict like any other.
+        if !leftForNextPull {
+            store.setLastSyncDate(watermark)
+        }
         return report
     }
 
@@ -456,6 +487,23 @@ public final class SyncEngine {
         guard !entry.isTake else { return false }
         guard let lastSync, let modified = ISO8601.date(from: entry.modified) else { return true }
         return modified > lastSync
+    }
+
+    /// True when the folder's entry for this Take changed after this sync's pull read the folder
+    /// (another device pushed between the halves, or the entry appeared since) and holds a
+    /// different version from this device's. Uploading over it would discard that device's edit
+    /// unseen. Always false for a push that follows no pull: there is nothing to compare with.
+    static func landedSincePull(_ entry: ManifestEntry, pulled: [UUID: ManifestEntry]?,
+                                over take: Take) -> Bool {
+        guard let pulled else { return false }
+        return pulled[take.id] != entry && entry.modified != ISO8601.string(from: take.modifiedAt)
+    }
+
+    /// True when this device's copy is not simply the version the pull found in the folder, so it
+    /// carries an edit the folder never had. Only then must the next pull see it as changed. A
+    /// copy that is the pulled version has nothing to keep: the newer one replaces it next pull.
+    static func hasOwnEdit(_ take: Take, pulled: [UUID: ManifestEntry]?) -> Bool {
+        pulled?[take.id]?.modified != ISO8601.string(from: take.modifiedAt)
     }
 
     /// Keep this device's edit as a new Take and let the original go (both sides
@@ -548,8 +596,12 @@ public final class SyncEngine {
         // Reads whichever version is in the folder, gates it, verifies the signature FIRST,
         // and decrypts a v3 body — all fail-closed. nil means nothing remote yet.
         guard let manifest = try readVerifiedManifest(from: cloud) else {
+            report.pulledEntries = [:]
             return report
         }
+        // As push reads them: a repeated id keeps its last entry.
+        report.pulledEntries = Dictionary(manifest.takes.map { ($0.uuid, $0) },
+                                          uniquingKeysWith: { _, last in last })
 
         let lastSync = store.lastSyncDate()
 
@@ -836,7 +888,8 @@ public final class SyncEngine {
             let out = try pushOutbound(isCancelled: isCancelled,
                                        repairing: Set(report.repairCandidates),
                                        holding: heldIDs.union(report.conflicts.map(\.local.id))
-                                                       .union(report.obieFlagHeld))
+                                                       .union(report.obieFlagHeld),
+                                       afterPull: report)
             report.uploaded = out.uploaded
             report.heldBack = out.heldBack
             report.repaired = out.repaired
