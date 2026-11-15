@@ -156,6 +156,52 @@ final class SyncPushBetweenHalvesTests: XCTestCase {
             || conflictsSeen > 0
         XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
     }
+
+    /// Found by the TLC model checker (with the step-1 and unverified fixes modelled). A pass that
+    /// cannot read the Take's file yet (not downloaded: `skipped`) still moves the watermark past
+    /// the other device's version without applying it. That version then looks already seen, so
+    /// this device's next edit, made on the old version, is kept and uploaded over it.
+    func testSkippedBlobDoesNotLetTheNextEditOverwriteAnUnseenVersion() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+        try engineA(11).sync()
+
+        // B's pass finds A's version declared but its file not downloaded yet.
+        let notYet = BlobNotYetDownloadedFolder(cloud)
+        let skipped = try TestFixtures.engine(store: storeB, cloud: notYet, keys: k, deviceId: deviceB,
+                                              now: { self.t0.addingTimeInterval(20) }).sync()
+        XCTAssertEqual(skipped.skipped, [take.id], "the setup: B skipped A's version")
+
+        var conflictsSeen = 0
+        try edit(storeB, take.id, "edit on B, made on base", at: 30)
+        conflictsSeen += try engineB(31).sync().conflicts.count
+        conflictsSeen += try engineA(40).sync().conflicts.count
+        conflictsSeen += try engineB(41).sync().conflicts.count
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "edit on A"
+            || storeB.take(id: take.id)?.primaryText == "edit on A"
+            || cloudText(take.id) == "edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
+    }
+}
+
+/// The folder as a device sees it before a file has downloaded: every .clk read finds nothing.
+private final class BlobNotYetDownloadedFolder: CloudFolder {
+    private let base: CloudFolder
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? { name.hasSuffix(".clk") ? nil : try base.read(name) }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
 }
 
 /// Runs `afterFirstBlobWrite` once, just after the first .clk write: inside a push, before its
