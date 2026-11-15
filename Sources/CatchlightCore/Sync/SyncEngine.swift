@@ -220,10 +220,15 @@ public final class SyncEngine {
         let entriesBeforePush = entries
         let pulledEntries = pulled?.pulledEntries
         let pulledUnread = Set(pulled?.skipped ?? [])
-        // Set when this push leaves a local edit for the next pull to settle, because another
-        // device's version landed after this sync's pull (`landedSincePull`). The watermark
-        // then stays where it was (step 7).
-        var leftForNextPull = false
+        // When this push leaves a local edit for the next pull to settle, because the folder
+        // holds a version the pull never read (`landedSincePull`): the earliest of that edit's
+        // stamp and the folder version's stamp. The watermark stays just below it (step 7).
+        var holdBelow: Date?
+        func keepForNextPull(_ take: Take, over entry: ManifestEntry) {
+            guard Self.hasOwnEdit(take, pulled: pulledEntries) else { return }
+            let stamps = [take.modifiedAt, ISO8601.date(from: entry.modified)].compactMap { $0 }
+            holdBelow = (stamps + [holdBelow].compactMap { $0 }).min()
+        }
 
         // 1. Upload changed Takes. Blob HMACs are computed from the bytes in
         //    hand — no read-back.
@@ -245,7 +250,7 @@ public final class SyncEngine {
             // the pull and this push, or listed but not readable yet. Uploading would replace it.
             if let e = entriesBeforePush[take.id],
                Self.landedSincePull(e, pulled: pulledEntries, unread: pulledUnread, over: take, since: lastSync) {
-                if Self.hasOwnEdit(take, pulled: pulledEntries) { leftForNextPull = true }
+                keepForNextPull(take, over: e)
                 continue
             }
             try upload(take, to: cloud, entries: &entries, report: &report)
@@ -378,7 +383,7 @@ public final class SyncEngine {
                 // Newer here is still not ours to upload over a version that landed after the
                 // pull: as step 1.
                 if Self.landedSincePull(entry, pulled: pulledEntries, unread: pulledUnread, over: take, since: lastSync) {
-                    if Self.hasOwnEdit(take, pulled: pulledEntries) { leftForNextPull = true }
+                    keepForNextPull(take, over: entry)
                     continue
                 }
                 try upload(take, to: cloud, entries: &entries, report: &report)
@@ -415,12 +420,18 @@ public final class SyncEngine {
         }
         try store.purgeTombstones(ids: supersededByEdit + deletionsOfScripts)
 
-        // 7. Watermark — the pre-query timestamp, NOT "now". Held back while a local edit waits
-        //    for the next pull (steps 1 and 4): advancing it would make that edit look synced,
-        //    and the next pull would see only the other device's side as changed and take it
-        //    over this one, losing the edit with no conflict shown. Held, the next pull finds
-        //    both sides changed since the last sync and reports the conflict like any other.
-        if !leftForNextPull {
+        // 7. Watermark — the pre-query timestamp, NOT "now". Held just below a local edit left
+        //    for the next pull (steps 1 and 4), and below the folder's version of it: advancing
+        //    past them would make the edit look synced, and the next pull would see only the
+        //    other device's side as changed and take it, losing the edit with no conflict shown.
+        //    Held, the next pull finds both sides changed and reports the conflict like any
+        //    other. Never moved back behind the last sync. The cost: a Take this push uploaded
+        //    with a stamp above the hold still counts as changed here until the next sync, so
+        //    another device's edit to it in that window shows as a conflict, not a clean update.
+        if let holdBelow {
+            store.setLastSyncDate(max(lastSync ?? .distantPast,
+                                      min(watermark, holdBelow.addingTimeInterval(-0.001))))
+        } else {
             store.setLastSyncDate(watermark)
         }
         return report
