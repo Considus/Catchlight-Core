@@ -16,7 +16,7 @@ custom_rules:
   try_optional:
     name: "Swallowed error"
     regex: '\btry\?'
-    excluded_match_kinds: [comment, comment.mark, doc.comment, string]
+    excluded_match_kinds: [comment, doc.comment, string]
     message: "try? throws the error away. If the user is waiting on this (save, export, import, purchase, restore, search), use try and show the failure: a swallowed error looks like an empty result. If a quiet failure really is right, handle it in a do/catch that logs why, and say so in a comment."
     severity: error
 
