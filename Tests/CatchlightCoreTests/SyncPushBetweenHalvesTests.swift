@@ -82,4 +82,58 @@ final class SyncPushBetweenHalvesTests: XCTestCase {
             || conflictsSeen > 0
         XCTAssertTrue(survives, "A's offline edit was lost with no conflict shown on either device")
     }
+
+    /// Found by the TLC model checker (spec/CatchlightSync.cfg). B's pull reads the manifest,
+    /// A pushes, then B's pull reads the blob: the bytes no longer match the entry B read, B holds
+    /// a newer local edit than that entry, so it reports nothing, and B's push uploads its edit
+    /// over A's. A's next pull then takes B's version. One edit on each device is enough.
+    func testEditPushedWhileTheOtherDeviceIsMidPullIsNeverLostSilently() throws {
+        let folder = MidPullFolder(cloud)
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+        try edit(storeB, take.id, "edit on B", at: 20)
+
+        var conflictsSeen = 0
+        // A's sync started at t0+15, before B's edit, and its push lands inside B's pull.
+        folder.beforeFirstBlobRead = {
+            conflictsSeen += (try? self.engineA(15).sync().conflicts.count) ?? 0
+        }
+        let engineBMidPull = TestFixtures.engine(store: storeB, cloud: folder, keys: k, deviceId: deviceB,
+                                                 now: { self.t0.addingTimeInterval(26) })
+        conflictsSeen += try engineBMidPull.sync().conflicts.count
+        conflictsSeen += try engineA(40).sync().conflicts.count
+        conflictsSeen += try engineB(41).sync().conflicts.count
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "edit on A"
+            || storeB.take(id: take.id)?.primaryText == "edit on A"
+            || cloudText(take.id) == "edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
+    }
+}
+
+/// Runs `beforeFirstBlobRead` once, just before the first .clk read: another device's sync
+/// landing between this device's manifest read and its blob read.
+private final class MidPullFolder: CloudFolder {
+    private let base: CloudFolder
+    var beforeFirstBlobRead: (() -> Void)?
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if name.hasSuffix(".clk"), let hook = beforeFirstBlobRead {
+            beforeFirstBlobRead = nil
+            hook()
+        }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
 }
