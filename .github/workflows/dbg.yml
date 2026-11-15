@@ -1,0 +1,23 @@
+name: Dbg
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  dbg:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: variants
+        run: |
+          mkdir -p "$RUNNER_TEMP/swiftlint"
+          curl -fsSL -o "$RUNNER_TEMP/s.zip" https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip
+          unzip -q "$RUNNER_TEMP/s.zip" -d "$RUNNER_TEMP/swiftlint"
+          SL="$RUNNER_TEMP/swiftlint/swiftlint"
+          mk() { printf 'only_rules:\n  - custom_rules\nincluded:\n  - Sources/CatchlightCore/Model\ncustom_rules:\n  r:\n    regex: '"'"'\\btry\\?'"'"'\n%s\n' "$2" > "$RUNNER_TEMP/$1.yml"; echo "== $1"; "$SL" lint --config "$RUNNER_TEMP/$1.yml" --quiet 2>&1 | grep -i "invalid\|warning: Inv" | head -2; }
+          mk A ''
+          mk B '    excluded_match_kinds: [comment]'
+          mk C '    excluded_match_kinds: [string]'
+          mk D '    excluded_match_kinds: [doc.comment]'
+          mk E '    severity: error'
+          mk F '    name: "Swallowed error"'
+          mk G '    message: "try? throws the error away. If a, b."'
