@@ -66,6 +66,13 @@ public protocol TakeStore: AnyObject {
     // Sync bookkeeping
     func lastSyncDate() -> Date?
     func setLastSyncDate(_ date: Date)
+    /// This device's own record of a Take's sync (`SyncRecord`), or nil when it has none. Kept
+    /// on this device only, never synced, and independent of the Take: it survives the Take's
+    /// deletion until the engine clears it. No default implementation: a store that silently
+    /// kept nothing would bring back the losses the record exists to prevent.
+    func syncRecord(id: UUID) throws -> SyncRecord?
+    /// Replace a Take's record; nil removes it.
+    func setSyncRecord(_ record: SyncRecord?, id: UUID) throws
 
     // Tombstones — deletion propagation (2026-06-10).
     /// All tombstones not yet purged. `delete(id:)` records one automatically.
@@ -110,8 +117,14 @@ public final class InMemoryTakeStore: TakeStore {
     private var sequences: [UUID: CatchlightSequence] = [:]
     private var lastSync: Date?
     private var tombstoneMap: [UUID: Tombstone] = [:]
+    private var records: [UUID: SyncRecord] = [:]
 
     public init() {}
+
+    public func syncRecord(id: UUID) throws -> SyncRecord? { records[id] }
+    public func setSyncRecord(_ record: SyncRecord?, id: UUID) throws { records[id] = record }
+    /// Drops every record: a store as an install from before records left it, for upgrade tests.
+    public func removeAllSyncRecords() { records = [:] }
 
     public func upsert(_ take: Take) throws {
         // Single-Obie invariant under last-write-wins: an incoming Obie demotes

@@ -321,8 +321,11 @@ final class SyncEngineEdgeCasesTests: XCTestCase {
 
     // MARK: - Pull: modifiedAt comparison through the engine
 
-    /// Older remote (modifiedAt before lastSync watermark) is ignored — local wins,
-    /// nothing applied, store unchanged.
+    /// Older remote (modifiedAt before lastSync watermark) is never applied over the local
+    /// edit, and the store is unchanged. With no sync record for the Take (a device updating
+    /// from a build without them), it is shown as a conflict rather than kept silently: an edit
+    /// made offline and uploaded late carries exactly this older stamp, and keeping the local
+    /// version here is how it was lost (SyncUpgradeToRecordsTests, 2026-11-17).
     func testSyncEngine_olderRemoteModifiedAt_isIgnored() throws {
         let k = makeKeys()
         let cloud = InMemoryCloudFolder()
@@ -348,7 +351,8 @@ final class SyncEngineEdgeCasesTests: XCTestCase {
         let report = try makeEngine(store: local, cloud: cloud, keys: k, now: { t0.addingTimeInterval(300) }).pullInbound()
 
         XCTAssertTrue(report.applied.isEmpty, "older remote must not be applied")
-        XCTAssertTrue(report.conflicts.isEmpty)
+        XCTAssertEqual(report.conflicts.map(\.remote.primaryText), ["remote-old"],
+                       "with no record, the older remote may be an edit this device never had")
         XCTAssertEqual(try local.take(id: localTake.id)?.primaryText, "local-newer")
     }
 
@@ -679,6 +683,8 @@ private final class MidPullDeleteStore: TakeStore {
     func setObie(id: UUID, replaceExisting: Bool) throws { try wrapped.setObie(id: id, replaceExisting: replaceExisting) }
     func lastSyncDate() -> Date? { wrapped.lastSyncDate() }
     func setLastSyncDate(_ date: Date) { wrapped.setLastSyncDate(date) }
+    func syncRecord(id: UUID) throws -> SyncRecord? { try wrapped.syncRecord(id: id) }
+    func setSyncRecord(_ record: SyncRecord?, id: UUID) throws { try wrapped.setSyncRecord(record, id: id) }
     func tombstones() throws -> [Tombstone] { try wrapped.tombstones() }
     func purgeTombstones(ids: [UUID]) throws { try wrapped.purgeTombstones(ids: ids) }
     func applyRemote(_ take: Take) throws -> Bool { try wrapped.applyRemote(take) }

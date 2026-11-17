@@ -6,10 +6,11 @@
 //  Phase 6 — this layer only decides what happened and never silently discards a
 //  user's edit.
 //
-//  Catchlight v1.0 uses last-write timestamps plus the last-sync watermark rather
-//  than vector clocks (a deliberate v1.0 simplification — full causal tracking is a
-//  candidate for a later horizon). The rule, given a local and a remote version of
-//  the same Take and the last-sync time:
+//  Catchlight v1.0 has no vector clocks. What counts as "changed" is decided by the
+//  caller: the sync engine compares each side with the version this device last agreed
+//  with (its per-Take `SyncRecord`, 2026-11-17); `decide(local:remote:lastSync:)` keeps
+//  the older comparison of edit times with the last-sync time. The rule, given a local
+//  and a remote version of the same Take:
 //
 //    • only the remote changed since last sync   → take remote
 //    • only the local changed since last sync    → keep local (it will be pushed)
@@ -32,15 +33,23 @@ public enum SyncDecision: Equatable, Sendable {
 
 public enum ConflictResolver {
     public static func decide(local: Take?, remote: Take, lastSync: Date?) -> SyncDecision {
+        let watermark = lastSync ?? .distantPast
+        return decide(local: local, remote: remote,
+                      localChanged: (local?.modifiedAt ?? .distantPast) > watermark,
+                      remoteChanged: remote.modifiedAt > watermark)
+    }
+
+    /// The same rule, given what changed on each side since this device last agreed with the
+    /// folder. The sync engine works this out from the device's `SyncRecord` (2026-11-15);
+    /// comparing edit times with the last-sync time lost an edit made offline and uploaded
+    /// after the other device's last sync.
+    public static func decide(local: Take?, remote: Take,
+                              localChanged: Bool, remoteChanged: Bool) -> SyncDecision {
         guard let local else {
             // Not present locally → a new Take created on another device.
             return .takeRemote(remote)
         }
         if local == remote { return .noChange }
-
-        let watermark = lastSync ?? .distantPast
-        let localChanged = local.modifiedAt > watermark
-        let remoteChanged = remote.modifiedAt > watermark
 
         switch (localChanged, remoteChanged) {
         case (false, true):  return .takeRemote(remote)

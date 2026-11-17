@@ -28,6 +28,14 @@
 //  edit made during the push window fell below the new watermark and was never
 //  uploaded.
 //
+//  SYNC RECORDS (2026-11-17): what counts as changed is judged per Take against the
+//  version this device last agreed with (`SyncRecord`, kept by the store, never synced),
+//  not by edit times against the watermark: an edit made offline and uploaded late
+//  carries an older stamp than the other device's last sync, and was written over with no
+//  conflict shown. Push never uploads over a version this device has not had. The
+//  watermark still selects push's candidates and is the fallback for a Take with no record.
+//  The TLA+ model in spec/ checks these rules (`FixedRecords`).
+//
 //  Local-only mode (§7.9): with no CloudFolder configured, no sync runs; all
 //  encryption still operates on the local encrypted store normally. When a
 //  folder is later configured, the first outbound run uploads every existing Take.
@@ -176,6 +184,16 @@ public final class SyncEngine {
     public func pushOutbound(isCancelled: () -> Bool = { false },
                              repairing repairIDs: Set<UUID> = [],
                              holding heldIDs: Set<UUID> = []) throws -> SyncReport {
+        try push(isCancelled: isCancelled, repairing: repairIDs, holding: heldIDs, afterPull: false)
+    }
+
+    /// - Parameter afterPull: true inside `sync()`, where the pull has just recorded every
+    ///   version it could settle. A Take still without a record is then one the pull could not
+    ///   settle (unreadable, failing verification, changed mid-pull, or shown as a conflict),
+    ///   and is left alone over a version it has not had, like any other. A push on its own
+    ///   keeps the rules from before records for such a Take.
+    private func push(isCancelled: () -> Bool, repairing repairIDs: Set<UUID>,
+                      holding heldIDs: Set<UUID>, afterPull: Bool) throws -> SyncReport {
         guard let cloud else { throw SyncError.noCloudFolderConfigured }
         try acquireLock(on: cloud)
         // Release on success OR failure — never leave a lock behind.
@@ -212,6 +230,28 @@ public final class SyncEngine {
         // an edit from elsewhere.
         let entriesBeforePush = entries
 
+        // NEVER WRITE OVER A VERSION THIS DEVICE HAS NOT HAD (2026-11-17). Another device can
+        // push between this sync's pull and push, inside the pull, or while this device could
+        // not read its file yet, or it can upload an edit made offline long before. The folder's
+        // entry is then a version this device's record does not name, and uploading over it
+        // would discard that edit unseen. Such a Take is left alone; the next pull finds both
+        // sides changed since the version this device last agreed with, and reports the conflict
+        // like any other. With no record yet, that pull judges this device's side by the
+        // watermark, so the watermark stays below the edit.
+        var holdBelow: Date?
+        func leaveForNextPull(_ take: Take, over entry: ManifestEntry?) throws -> Bool {
+            guard let entry, holds(entry) else { return false }
+            let record = try store.syncRecord(id: take.id)
+            let recordless = record?.agreed == nil && record?.uploaded == nil
+            // No record, and no pull just before: the rules from before records.
+            if recordless, !afterPull { return false }
+            guard Self.unseenVersion(entry, of: take, record: record) else { return false }
+            if recordless {
+                holdBelow = min(holdBelow ?? take.modifiedAt, take.modifiedAt)
+            }
+            return true
+        }
+
         // 1. Upload changed Takes. Blob HMACs are computed from the bytes in
         //    hand — no read-back.
         let changed = try store.takesModified(since: lastSync)
@@ -228,6 +268,7 @@ public final class SyncEngine {
                 try forkAndUpload(take, to: cloud, entries: &entries, report: &report)
                 continue
             }
+            if try leaveForNextPull(take, over: entriesBeforePush[take.id]) { continue }
             try upload(take, to: cloud, entries: &entries, report: &report)
         }
 
@@ -242,13 +283,29 @@ public final class SyncEngine {
         //    than sent, because from here the Take simply no longer exists.
         let localTombstones = try store.tombstones()
         var deletionsOfScripts: [UUID] = []
+        // Files of deleted Takes, removed only AFTER the manifest stops listing them
+        // (2026-11-17). Removed first, a push cancelled in between left the manifest naming a
+        // file that was gone: every device skips it for good, and with records none uploads
+        // over a version it has not had, so the folder never healed. Cancelled the other way,
+        // the file is left over with no entry naming it, which nothing reads.
+        var blobsToDelete: Set<UUID> = []
+        // Deletions overtaken by a newer edit from another device (see below): dropped here.
+        var overtakenDeletions: [UUID] = []
         for ts in localTombstones {
             if isCancelled() { throw CancellationError() }
             if let e = entriesBeforePush[ts.id], !holds(e) {
                 deletionsOfScripts.append(ts.id)
                 continue
             }
-            try? cloud.delete("\(ts.id.uuidString).clk")
+            // The folder holds a version this device has not had, edited after this deletion.
+            // By the edit-versus-deletion rule the edit wins, as a pull applies it: sending the
+            // deletion would remove an edit nobody here has seen. The next pull brings it back.
+            if let e = entriesBeforePush[ts.id], holds(e), try Self.deletionOvertaken(
+                   ts, by: e, record: store.syncRecord(id: ts.id)) {
+                overtakenDeletions.append(ts.id)
+                continue
+            }
+            blobsToDelete.insert(ts.id)
             let incoming = ManifestTombstone(uuid: ts.id, deletedAt: ISO8601.string(from: ts.deletedAt))
             if let existing = mergedTombstones[ts.id],
                (ISO8601.date(from: existing.deletedAt) ?? .distantPast) >= ts.deletedAt {
@@ -289,7 +346,7 @@ public final class SyncEngine {
             // forever. Guarded on the entry so it runs once, not on every push
             // for the tombstone's whole retention life.
             if entries[id] != nil {
-                try? cloud.delete("\(id.uuidString).clk")
+                blobsToDelete.insert(id)
             }
             entries[id] = nil
             finalTombstones.append(t)
@@ -355,6 +412,8 @@ public final class SyncEngine {
                 // too rather than the Take being stranded behind a value nothing can read.
                 let cloudModified = ISO8601.date(from: entry.modified)
                 if let cloudModified, take.modifiedAt <= cloudModified { continue }
+                // Newer here is not enough over a version this device has not had: as step 1.
+                if try leaveForNextPull(take, over: entriesBeforePush[take.id]) { continue }
                 try upload(take, to: cloud, entries: &entries, report: &report)
             } else {
                 if offlineTooLong, let lastSync, take.modifiedAt <= lastSync {
@@ -373,6 +432,28 @@ public final class SyncEngine {
             tombstones: finalTombstones.sorted { $0.uuid.uuidString < $1.uuid.uuidString }
         )
         try writeManifest(manifest, to: cloud)
+        // Not cancellable: the manifest is written, and the rest of this push is bookkeeping.
+        // A file that can't be removed is left over with no entry naming it, which nothing
+        // reads, so a failure here is not the push's: it is logged and the push carries on.
+        for id in blobsToDelete.sorted(by: { $0.uuidString < $1.uuidString }) {
+            do {
+                try cloud.delete("\(id.uuidString).clk")
+            } catch {
+                let ns = error as NSError
+                // Content-free and uncoded: no UUID, and not a push failure.
+                DiagnosticsLog.shared.record(.lifecycle, "Sync: a deleted note's file was left in the folder (\(ns.domain) \(ns.code))")
+            }
+        }
+
+        // This device's uploads, now listed in the folder: each becomes the agreed version once
+        // a pull sees it there (`refreshRecord`), not before, because another device's manifest
+        // write can still replace it.
+        for id in Set(report.uploaded) {
+            guard let e = entries[id] else { continue }
+            var record = try store.syncRecord(id: id) ?? SyncRecord()
+            record.uploaded = e.modified
+            try store.setSyncRecord(record, id: id)
+        }
 
         // 6. Local tombstones are NOT purged here (2026-06-10). Two devices can
         //    pass the advisory lock during cloud propagation delay and the later
@@ -387,10 +468,16 @@ public final class SyncEngine {
         let supersededByEdit = localTombstones.map(\.id).filter { id in
             !tombstonedIds.contains(id) && localById[id] != nil
         }
-        try store.purgeTombstones(ids: supersededByEdit + deletionsOfScripts)
+        try store.purgeTombstones(ids: supersededByEdit + deletionsOfScripts + overtakenDeletions)
 
-        // 7. Watermark — the pre-query timestamp, NOT "now".
-        store.setLastSyncDate(watermark)
+        // 7. Watermark — the pre-query timestamp, NOT "now". Held just below an edit left for
+        //    the next pull on a Take with no record yet (see step 1), never behind the last sync.
+        if let holdBelow {
+            store.setLastSyncDate(max(lastSync ?? .distantPast,
+                                      min(watermark, holdBelow.addingTimeInterval(-0.001))))
+        } else {
+            store.setLastSyncDate(watermark)
+        }
         return report
     }
 
@@ -456,6 +543,31 @@ public final class SyncEngine {
         guard !entry.isTake else { return false }
         guard let lastSync, let modified = ISO8601.date(from: entry.modified) else { return true }
         return modified > lastSync
+    }
+
+    /// The versions of a Take this device has had: the one it last agreed with, and its own
+    /// upload not yet seen in a pull. A version shown to the user joins them only once the user
+    /// has settled it (`refreshRecord`).
+    static func versionsHad(_ record: SyncRecord?) -> Set<String> {
+        guard let record else { return [] }
+        return Set([record.agreed, record.uploaded].compactMap { $0 })
+    }
+
+    /// True when the entry is a version of this Take this device has not had: not this device's
+    /// own copy, and not one its record names.
+    static func unseenVersion(_ entry: ManifestEntry, of take: Take, record: SyncRecord?) -> Bool {
+        entry.modified != ISO8601.string(from: take.modifiedAt)
+            && !versionsHad(record).contains(entry.modified)
+    }
+
+    /// True when the folder's entry is a version this device has not had, edited after this
+    /// device's deletion: by the edit-versus-deletion rule the edit wins, so the deletion must
+    /// not remove it.
+    static func deletionOvertaken(_ deletion: Tombstone, by entry: ManifestEntry,
+                                  record: SyncRecord?) -> Bool {
+        guard !versionsHad(record).contains(entry.modified),
+              let modified = ISO8601.date(from: entry.modified) else { return false }
+        return modified > deletion.deletedAt
     }
 
     /// Keep this device's edit as a new Take and let the original go (both sides
@@ -579,6 +691,7 @@ public final class SyncEngine {
                 // (The delete just recorded a fresh local tombstone; the purge
                 // below removes it — the manifest already carries the record.)
                 try store.purgeTombstones(ids: [t.uuid])
+                try store.setSyncRecord(nil, id: t.uuid)
                 report.deletedLocally.append(t.uuid)
             }
         }
@@ -646,6 +759,7 @@ public final class SyncEngine {
                 }
                 continue
             }
+            let record = try refreshRecord(for: entry, held: heldIDs.contains(entry.uuid))
             let name = "\(entry.uuid.uuidString).clk"
             guard let blobBytes = try cloud.read(name) else {
                 // Declared but not yet readable — provider propagation lag or an
@@ -655,7 +769,7 @@ public final class SyncEngine {
             }
             // Per-blob HMAC verification.
             guard signer.verifyBlob(blobBytes, expectedHex: entry.hmac) else {
-                try classifyUnverified(entry, blobBytes: blobBytes,
+                try classifyUnverified(entry, blobBytes: blobBytes, record: record,
                                        pendingTombstones: pendingTombstoneByID, into: &report)
                 continue
             }
@@ -683,8 +797,13 @@ public final class SyncEngine {
             // written over theirs meanwhile. A version newer than the last sync is reported, so
             // the app's pair carries the latest one the user could keep.
             if heldIDs.contains(entry.uuid), let local {
+                // A version this device has not had can still carry a stamp older than the
+                // last sync and go unreported here. Nothing is lost by that: once the user
+                // settles the older pair, push still won't upload over a version this device has
+                // not had (`unseenVersion`), and the next pull shows the newer one.
                 if remoteTake.modifiedAt > (lastSync ?? .distantPast), remoteTake != local {
                     report.conflicts.append((local: local, remote: remoteTake))
+                    try markShown(entry, against: local, record)
                 }
                 continue
             }
@@ -721,10 +840,46 @@ public final class SyncEngine {
                     report.obieFlagHeld.append(entry.uuid)
                 } else if try store.applyRemote(remoteTake) {
                     report.applied.append(entry.uuid)
+                    try markAgreed(entry, record)
                 }
                 continue
             }
-            switch ConflictResolver.decide(local: local, remote: remoteTake, lastSync: lastSync) {
+            // CHANGED SINCE THIS DEVICE LAST AGREED WITH THE FOLDER (2026-11-17). With a record,
+            // each side is compared with the version it names, not edit times with the
+            // last-sync time: an edit made offline and uploaded after the other device's last
+            // sync carries an older edit time and used to look unchanged.
+            //
+            // With no record (the first sync after updating from a build without records, or
+            // a Take not agreed yet), the folder's side always counts as changed, and this
+            // device's side counts as changed when it is newer than the last sync or than the
+            // folder's version. So a difference is taken from the folder only when this device's
+            // copy is older on both counts, and otherwise shown as a conflict: never kept here
+            // and uploaded over a version this device cannot prove it has had.
+            let stamp = local.map { ISO8601.string(from: $0.modifiedAt) }
+            let localChanged: Bool
+            let remoteChanged: Bool
+            // This device's own upload, replaced before this device saw it in a pull: the other
+            // device wrote over it, so had it, and this side has no change. Unless this pair has
+            // been shown to the user and not settled yet: then it stays the user's to choose.
+            let ownUploadReplaced = stamp != nil && stamp == record?.uploaded
+                && !(record?.shown == entry.modified && record?.shownLocal == stamp)
+            if local != nil, let agreed = record?.agreed {
+                localChanged = stamp != agreed && !ownUploadReplaced
+                remoteChanged = entry.modified != agreed
+            } else if local != nil, let uploaded = record?.uploaded {
+                // This device's own upload is the last version it knows the folder had.
+                localChanged = stamp != uploaded
+                remoteChanged = true
+            } else if let local {
+                localChanged = ownUploadReplaced ? false
+                    : local.modifiedAt > (lastSync ?? .distantPast) || local.modifiedAt > remoteTake.modifiedAt
+                remoteChanged = true
+            } else {
+                localChanged = false
+                remoteChanged = true
+            }
+            switch ConflictResolver.decide(local: local, remote: remoteTake,
+                                           localChanged: localChanged, remoteChanged: remoteChanged) {
             case .takeRemote(let t) where try t.isObie && obieIsHeld(besides: t.id):
                 if try store.applyRemote(Self.withoutObie(t)) {
                     report.applied.append(t.id)
@@ -741,10 +896,14 @@ public final class SyncEngine {
                 // ties; a remote edit strictly after it still lands.
                 if try store.applyRemote(t) {
                     report.applied.append(t.id)
+                    try markAgreed(entry, record)
                 }
             case .conflict(let l, let r):
                 report.conflicts.append((local: l, remote: r))   // surfaced; UI resolves
-            case .keepLocal, .noChange:
+                try markShown(entry, against: l, record)
+            case .noChange:
+                try markAgreed(entry, record)
+            case .keepLocal:
                 break
             }
         }
@@ -752,6 +911,47 @@ public final class SyncEngine {
         // NOTE: deletion-by-absence is intentionally GONE. A local Take absent
         // from the manifest is uploaded by the next push, never deleted.
         return report
+    }
+
+    // MARK: - Sync records (2026-11-17; see SyncRecord.swift)
+
+    /// The pull's first look at an entry, before its file is read. This device's own upload,
+    /// now in the folder, becomes the agreed version. So does a version shown to the user, once
+    /// the user has settled it: the Take is no longer held and this device's copy has changed
+    /// since (a choice is stamped as a fresh edit), or has gone. Returns the record.
+    private func refreshRecord(for entry: ManifestEntry, held: Bool) throws -> SyncRecord? {
+        guard var record = try store.syncRecord(id: entry.uuid) else { return nil }
+        let before = record
+        if record.uploaded == entry.modified {
+            record.agreed = entry.modified
+            record.uploaded = nil
+        }
+        if record.shown == entry.modified, !held {
+            let stamp = try store.take(id: entry.uuid).map { ISO8601.string(from: $0.modifiedAt) }
+            if stamp == nil || stamp != record.shownLocal {
+                record.agreed = entry.modified
+                record.shown = nil
+                record.shownLocal = nil
+            }
+        }
+        if record != before { try store.setSyncRecord(record, id: entry.uuid) }
+        return record
+    }
+
+    /// This device now holds the version the entry names.
+    private func markAgreed(_ entry: ManifestEntry, _ record: SyncRecord?) throws {
+        var r = record ?? SyncRecord()
+        r.agreed = entry.modified
+        r.uploaded = nil
+        if r != record { try store.setSyncRecord(r, id: entry.uuid) }
+    }
+
+    /// The entry's version has been shown to the user against this device's copy.
+    private func markShown(_ entry: ManifestEntry, against local: Take?, _ record: SyncRecord?) throws {
+        var r = record ?? SyncRecord()
+        r.shown = entry.modified
+        r.shownLocal = local.map { ISO8601.string(from: $0.modifiedAt) }
+        if r != record { try store.setSyncRecord(r, id: entry.uuid) }
     }
 
     /// A cloud copy whose bytes no longer match the manifest's HMAC — most often a provider that
@@ -768,7 +968,7 @@ public final class SyncEngine {
     ///
     /// Nothing unverified is ever written locally here. AES-GCM authenticates the ciphertext, so
     /// a copy that decrypts is this user's own content; it may still be an older version.
-    private func classifyUnverified(_ entry: ManifestEntry, blobBytes: Data,
+    private func classifyUnverified(_ entry: ManifestEntry, blobBytes: Data, record: SyncRecord?,
                                     pendingTombstones: [UUID: Date],
                                     into report: inout SyncReport) throws {
         let local = try store.take(id: entry.uuid)
@@ -793,12 +993,18 @@ public final class SyncEngine {
                 report.repairCandidates.append(entry.uuid)
                 return
             }
-            if let entryModified = ISO8601.date(from: entry.modified), local.modifiedAt > entryModified {
-                return   // a newer local edit: push step 1 or 4 uploads it
+            // A newer local edit over a version this device has had (or, with no record, any):
+            // push step 1 or 4 uploads it. Over a version it never had, push won't, so the
+            // user decides.
+            if let entryModified = ISO8601.date(from: entry.modified), local.modifiedAt > entryModified,
+               record?.agreed.map({ $0 == entry.modified }) ?? true {
+                return
             }
             report.unverified.append(UnverifiedCopy(id: entry.uuid, local: local, cloud: cloudTake))
+            try markShown(entry, against: local, record)
         } else if let cloudTake {
             report.unverified.append(UnverifiedCopy(id: entry.uuid, local: nil, cloud: cloudTake))
+            try markShown(entry, against: nil, record)
         } else {
             report.quarantined.append(entry.uuid)
         }
@@ -833,10 +1039,11 @@ public final class SyncEngine {
         }
         DiagnosticsLog.shared.record(.syncPullOK, "Sync: pull ok")
         do {
-            let out = try pushOutbound(isCancelled: isCancelled,
-                                       repairing: Set(report.repairCandidates),
-                                       holding: heldIDs.union(report.conflicts.map(\.local.id))
-                                                       .union(report.obieFlagHeld))
+            let out = try push(isCancelled: isCancelled,
+                               repairing: Set(report.repairCandidates),
+                               holding: heldIDs.union(report.conflicts.map(\.local.id))
+                                               .union(report.obieFlagHeld),
+                               afterPull: true)
             report.uploaded = out.uploaded
             report.heldBack = out.heldBack
             report.repaired = out.repaired

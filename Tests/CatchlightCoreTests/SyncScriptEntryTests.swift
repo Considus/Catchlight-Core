@@ -488,6 +488,8 @@ private final class EditBeforeReleaseStore: TakeStore {
     func setObie(id: UUID, replaceExisting: Bool) throws { try wrapped.setObie(id: id, replaceExisting: replaceExisting) }
     func lastSyncDate() -> Date? { wrapped.lastSyncDate() }
     func setLastSyncDate(_ date: Date) { wrapped.setLastSyncDate(date) }
+    func syncRecord(id: UUID) throws -> SyncRecord? { try wrapped.syncRecord(id: id) }
+    func setSyncRecord(_ record: SyncRecord?, id: UUID) throws { try wrapped.setSyncRecord(record, id: id) }
     func tombstones() throws -> [Tombstone] { try wrapped.tombstones() }
     func purgeTombstones(ids: [UUID]) throws { try wrapped.purgeTombstones(ids: ids) }
     func applyRemote(_ take: Take) throws -> Bool { try wrapped.applyRemote(take) }
