@@ -30,7 +30,7 @@ swift run   --scratch-path "$BUILD_DIR/spm" coreverify   # must pass before any 
 swift test  --scratch-path "$BUILD_DIR/spm"
 ```
 
-Read the test **count**, not the word "passed". On CI (`.github/workflows/ci.yml`), Linux reports 46 fewer tests than macOS (15 Spotlight tests compiled out, 31 contract tests its discovery can't see) and skips 26 LinkDetector tests. Windows should match Linux; any other gap means a suite was dropped.
+Read the test **count**, not the word "passed". On CI (`.github/workflows/ci.yml`), Linux reports 48 fewer tests than macOS (15 Spotlight tests compiled out, 33 contract tests its discovery can't see) and skips 26 LinkDetector tests. Windows should match Linux; any other gap means a suite was dropped.
 
 To try swift-crypto on a Mac, in a scratch copy: point at a local swift-crypto checkout (`let development = true` in its `Package.swift`), drop `linuxCrypto`'s platform condition, import `Crypto` directly. Never commit that.
 
