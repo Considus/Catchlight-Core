@@ -7,6 +7,7 @@ For a coding agent working in this repo. People start with [`README.md`](README.
 - **Leave the frozen contract bytes in `Sources/CatchlightCore/Crypto/` as they are:** changing one breaks existing data.
 - **Give every change to what is written (a Take field, the manifest, an envelope) a reader for the old shape,** agreed with the apps. Additive optional fields are safe: see `ManifestEntry.kind`, and `Take.kind` / `Take.pageMode`, written only when set so a Take's bytes never change (`TakeKindTests` pins them against a golden).
 - **Ask `holds(_:)` whether this device may read an entry.** `SyncEngine(holdsScripts:)` is off on the phone and on for the desktop; the Script rules are in `SyncEngine.swift`'s doc comments, pinned by `SyncScriptEntryTests` and `SyncScriptsHeldTests`. A deletion record carries no kind, so with the option off, a Script deleted from the device's own store (the desktop before its Scripts sync) is the app's to keep local (Catchlight-MacOS does, in `App/Sources/Vault/Library.swift`).
+- **Every `TakeStore` keeps each Take's `SyncRecord` on the device, never synced** (`syncRecord(id:)` and `setSyncRecord(_:id:)`, no default). Sync judges what changed against it, not against the last-sync time; a store that drops it brings back the losses in `SyncPushBetweenHalvesTests`. The contract tests pin it, and `SyncUpgradeToRecordsTests` pins the first sync after updating, with no records yet.
 - **Treat `CatchlightCoreTestSupport` (the store contract and shared fixtures) like an API.** Link it only from a test target not hosted in an app: a hosted bundle gets a second CatchlightCore and casts across the copies fail (Catchlight-iOS#309), so iOS keeps its own copy of the contract, matching the pinned tag. Keep its XCTest file inside `#if canImport(XCTest)` so `swift build` works with only the Command Line Tools.
 - **`swift-crypto` is the one dependency,** for Linux and Windows only (`linuxCrypto`). Import crypto as below so Apple builds never link it, and outside the module write `CatchlightCore.CryptoError`, which clashes with swift-crypto's.
 
@@ -29,7 +30,7 @@ swift run   --scratch-path "$BUILD_DIR/spm" coreverify   # must pass before any 
 swift test  --scratch-path "$BUILD_DIR/spm"
 ```
 
-Read the test **count**, not the word "passed". On CI (`.github/workflows/ci.yml`), Linux reports 46 fewer tests than macOS (15 Spotlight tests compiled out, 31 contract tests its discovery can't see) and skips 26 LinkDetector tests. Windows should match Linux; any other gap means a suite was dropped.
+Read the test **count**, not the word "passed". On CI (`.github/workflows/ci.yml`), Linux reports 48 fewer tests than macOS (15 Spotlight tests compiled out, 33 contract tests its discovery can't see) and skips 26 LinkDetector tests. Windows should match Linux; any other gap means a suite was dropped.
 
 To try swift-crypto on a Mac, in a scratch copy: point at a local swift-crypto checkout (`let development = true` in its `Package.swift`), drop `linuxCrypto`'s platform condition, import `Crypto` directly. Never commit that.
 

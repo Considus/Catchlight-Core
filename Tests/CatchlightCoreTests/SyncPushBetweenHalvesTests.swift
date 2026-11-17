@@ -1,0 +1,496 @@
+//
+//  SyncPushBetweenHalvesTests.swift
+//  CatchlightCoreTests
+//
+//  Found while writing the TLA+ model of sync (spec/CatchlightSync.tla). `sync()` runs the
+//  pull and then the push, but another device can push in between: the pull reads every blob
+//  in the folder first, so the window is as long as the pull. Push step 1 uploads every Take
+//  changed since the last sync without comparing it with the folder's entry, so this device's
+//  edit replaces the other device's newer one, which its own pull never saw.
+//
+
+import XCTest
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+import CatchlightCoreTestSupport
+@testable import CatchlightCore
+
+final class SyncPushBetweenHalvesTests: XCTestCase {
+    private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    private let k = KeyHierarchy(masterKey: SymmetricKey(size: .bits256))
+    private let cloud = InMemoryCloudFolder()
+    private let storeA = InMemoryTakeStore(), storeB = InMemoryTakeStore()
+    private let deviceA = UUID(), deviceB = UUID()
+
+    private func engineA(_ at: TimeInterval) -> SyncEngine {
+        TestFixtures.engine(store: storeA, cloud: cloud, keys: k, deviceId: deviceA,
+                            now: { self.t0.addingTimeInterval(at) })
+    }
+
+    private func engineB(_ at: TimeInterval) -> SyncEngine {
+        TestFixtures.engine(store: storeB, cloud: cloud, keys: k, deviceId: deviceB,
+                            now: { self.t0.addingTimeInterval(at) })
+    }
+
+    private func cloudText(_ id: UUID) throws -> String? {
+        guard let entry = try Manifest.readEncrypted(from: cloud, keys: k).takes.first(where: { $0.uuid == id }) else {
+            return nil
+        }
+        let bytes = try XCTUnwrap(cloud.read("\(entry.uuid.uuidString).clk"))
+        let ct = try XCTUnwrap(CloudBlob.parse(bytes).ciphertext)
+        return try TakeCrypto(keys: k).open(ct, takeUUID: entry.uuid).primaryText
+    }
+
+    private func edit(_ store: InMemoryTakeStore, _ id: UUID, _ text: String, at: TimeInterval) throws {
+        var take = try XCTUnwrap(store.take(id: id))
+        take.primaryText = text
+        take.modifiedAt = t0.addingTimeInterval(at)
+        try store.upsert(take)
+    }
+
+    /// A's offline edit must survive somewhere the user can see it: on a device, in the folder,
+    /// or as a conflict. Here it ends up in none of them, and neither device reports anything.
+    func testEditPushedBetweenTheOtherDevicesPullAndPushIsNeverLostSilently() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "offline edit on A", at: 10)
+        try edit(storeB, take.id, "edit on B", at: 20)
+
+        // A's sync, split where B's sync lands: the pull still sees "base" in the folder.
+        var conflictsSeen = try engineA(25).pullInbound().conflicts.count
+        conflictsSeen += try engineB(26).sync().conflicts.count
+        conflictsSeen += try engineA(27).pushOutbound().conflicts.count
+        XCTAssertEqual(try cloudText(take.id), "edit on B",
+                       "A's push replaced B's newer edit, which A's pull never saw")
+
+        // B keeps writing on top of its own version, as a user would.
+        try edit(storeB, take.id, "second edit on B", at: 30)
+        conflictsSeen += try engineB(31).sync().conflicts.count
+        conflictsSeen += try engineA(40).sync().conflicts.count
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "offline edit on A"
+            || storeB.take(id: take.id)?.primaryText == "offline edit on A"
+            || cloudText(take.id) == "offline edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's offline edit was lost with no conflict shown on either device")
+    }
+    /// The same race through `sync()` itself: B's whole sync runs at the moment A's push starts
+    /// (when it reads the lock), after A's pull has read the folder.
+    func testSyncNeverUploadsOverAVersionPushedBetweenItsPullAndPush() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "offline edit on A", at: 10)
+        try edit(storeB, take.id, "edit on B", at: 20)
+
+        var conflictsSeen = 0
+        let viewA = InterleavingCloudFolder(cloud)
+        viewA.beforeFirstRead(of: SyncLock.fileName) {
+            conflictsSeen += try self.engineB(26).sync().conflicts.count
+        }
+        let syncA = TestFixtures.engine(store: storeA, cloud: viewA, keys: k, deviceId: deviceA,
+                                        now: { self.t0.addingTimeInterval(25) })
+        conflictsSeen += try syncA.sync().conflicts.count
+        XCTAssertTrue(viewA.fired, "B's sync ran between A's pull and push")
+        XCTAssertEqual(try cloudText(take.id), "edit on B",
+                       "A's push replaced B's newer edit, which A's pull never saw")
+
+        try edit(storeB, take.id, "second edit on B", at: 30)
+        conflictsSeen += try engineB(31).sync().conflicts.count
+        let next = try engineA(40).sync()
+        conflictsSeen += next.conflicts.count
+        XCTAssertEqual(next.conflicts.map(\.local.primaryText), ["offline edit on A"],
+                       "A's next sync shows its edit against B's as a conflict")
+        XCTAssertEqual(next.conflicts.map(\.remote.primaryText), ["second edit on B"])
+        XCTAssertEqual(try storeA.take(id: take.id)?.primaryText, "offline edit on A",
+                       "A's edit stays on A while the user chooses")
+        XCTAssertGreaterThan(conflictsSeen, 0)
+    }
+
+    /// Only an edit of A's own is kept back. When A holds just the version its pull found and B
+    /// pushes a newer one between the halves, there is nothing to keep: A's push leaves B's
+    /// version in the folder, and A's next sync takes it with no conflict.
+    func testAPulledVersionIsNotHeldAgainstANewerOnePushedBetweenTheHalves() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeB, take.id, "first edit on B", at: 10)
+        try engineB(11).sync()
+
+        let viewA = InterleavingCloudFolder(cloud)
+        viewA.beforeFirstRead(of: SyncLock.fileName) {
+            try self.edit(self.storeB, take.id, "second edit on B", at: 30)
+            _ = try self.engineB(31).sync()
+        }
+        let first = try TestFixtures.engine(store: storeA, cloud: viewA, keys: k, deviceId: deviceA,
+                                            now: { self.t0.addingTimeInterval(25) }).sync()
+        XCTAssertTrue(viewA.fired)
+        XCTAssertEqual(first.applied, [take.id], "A's pull took B's first edit")
+        XCTAssertEqual(try cloudText(take.id), "second edit on B")
+
+        let next = try engineA(40).sync()
+        XCTAssertTrue(next.conflicts.isEmpty, "nothing of A's own was waiting")
+        XCTAssertEqual(try storeA.take(id: take.id)?.primaryText, "second edit on B")
+    }
+
+    /// An edit made on this device between its own pull and push is uploaded as before: the
+    /// folder did not change between the halves, so there is nothing of another device's to keep.
+    func testAnEditMadeBetweenThisDevicesOwnPullAndPushIsStillUploaded() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+
+        let viewA = InterleavingCloudFolder(cloud)
+        viewA.beforeFirstRead(of: SyncLock.fileName) {
+            try self.edit(self.storeA, take.id, "edited during the sync", at: 24)
+        }
+        _ = try TestFixtures.engine(store: storeA, cloud: viewA, keys: k, deviceId: deviceA,
+                                    now: { self.t0.addingTimeInterval(25) }).sync()
+        XCTAssertTrue(viewA.fired)
+        XCTAssertEqual(try cloudText(take.id), "edited during the sync")
+    }
+
+    /// Found by the TLC model checker (spec/CatchlightSync.cfg). B's pull reads the manifest,
+    /// A pushes, then B's pull reads the blob: the bytes no longer match the entry B read, B holds
+    /// a newer local edit than that entry, so it reports nothing, and B's push uploads its edit
+    /// over A's. A's next pull then takes B's version. One edit on each device is enough.
+    func testEditPushedWhileTheOtherDeviceIsMidPullIsNeverLostSilently() throws {
+        let folder = MidPullFolder(cloud)
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+        try edit(storeB, take.id, "edit on B", at: 20)
+
+        var conflictsSeen = 0
+        // A's sync started at t0+15, before B's edit, and its push lands inside B's pull.
+        folder.beforeFirstBlobRead = {
+            conflictsSeen += (try? self.engineA(15).sync().conflicts.count) ?? 0
+        }
+        let engineBMidPull = TestFixtures.engine(store: storeB, cloud: folder, keys: k, deviceId: deviceB,
+                                                 now: { self.t0.addingTimeInterval(26) })
+        conflictsSeen += try engineBMidPull.sync().conflicts.count
+        conflictsSeen += try engineA(40).sync().conflicts.count
+        conflictsSeen += try engineB(41).sync().conflicts.count
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "edit on A"
+            || storeB.take(id: take.id)?.primaryText == "edit on A"
+            || cloudText(take.id) == "edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
+    }
+
+    /// The other device's version is in the manifest but its file can't be read yet (provider
+    /// lag), and that device's clock runs ahead. Push must not upload over a version it cannot
+    /// see, and must keep this edit counted as unsynced: if the watermark moved past it, the next
+    /// pull would read the other version as the only change and write it over this edit.
+    func testEditIsKeptWhenTheOtherDevicesVersionCannotBeReadYet() throws {
+        let folder = HidingFolder(cloud)
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+        try edit(storeB, take.id, "edit on B", at: 30)
+        try engineB(31).sync()
+
+        folder.hideBlobs = true
+        let engineAHidden = TestFixtures.engine(store: storeA, cloud: folder, keys: k, deviceId: deviceA,
+                                                now: { self.t0.addingTimeInterval(27) })
+        var conflictsSeen = try engineAHidden.sync().conflicts.count
+        XCTAssertEqual(try cloudText(take.id), "edit on B",
+                       "A uploaded over B's version without being able to read it")
+
+        folder.hideBlobs = false
+        conflictsSeen += try engineA(40).sync().conflicts.count
+        XCTAssertEqual(try storeA.take(id: take.id)?.primaryText == "edit on A" || conflictsSeen > 0, true,
+                       "A's edit was replaced by B's with no conflict shown")
+        XCTAssertGreaterThan(conflictsSeen, 0, "both devices changed the Take, so A must see a conflict")
+    }
+
+    /// The other side of the rule: an edit made between the pull and the push of one sync, on
+    /// top of the version that pull has just brought in, is this device building on what it has
+    /// seen. It uploads with no conflict, as it did before push learned to check the folder.
+    func testEditOnTopOfAVersionThisSyncPulledUploadsWithoutConflict() throws {
+        let folder = SecondManifestReadFolder(cloud)
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+        try engineA(11).sync()
+
+        // B's sync pulls A's edit; the user edits it before B's push reads the folder.
+        folder.beforeSecondManifestRead = { try? self.edit(self.storeB, take.id, "B builds on A's edit", at: 15) }
+        let engineBWithEdit = TestFixtures.engine(store: storeB, cloud: folder, keys: k, deviceId: deviceB,
+                                                  now: { self.t0.addingTimeInterval(20) })
+        let report = try engineBWithEdit.sync()
+        XCTAssertEqual(report.conflicts.count, 0, "B had seen A's version, so there is nothing to choose between")
+        XCTAssertEqual(try cloudText(take.id), "B builds on A's edit")
+    }
+
+    /// Found by the TLC model checker with the step-1 fix modelled (FixedPushStep1). The lock is
+    /// advisory: with cloud propagation delay, B cannot see A's lock yet and syncs while A's push
+    /// is between its blob write and its manifest write. Neither push sees the other's change, and
+    /// the later manifest write leaves A's edit with no conflict on either device.
+    func testEditLostWhenTwoPushesPassTheLockTogether() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+
+        var conflictsSeen = 0
+        let folderA = AfterFirstBlobWriteFolder(cloud)
+        folderA.afterFirstBlobWrite = {
+            try? self.edit(self.storeB, take.id, "edit on B", at: 20)
+            let lagged = LockNotYetVisibleFolder(self.cloud)
+            let engineB = TestFixtures.engine(store: self.storeB, cloud: lagged, keys: self.k, deviceId: self.deviceB,
+                                              now: { self.t0.addingTimeInterval(21) })
+            let report = try? engineB.sync()
+            XCTAssertEqual(report?.pushDeferred, false, "B's push must pass the lock for this race")
+            conflictsSeen += report?.conflicts.count ?? 0
+        }
+        let engineAInPush = TestFixtures.engine(store: storeA, cloud: folderA, keys: k, deviceId: deviceA,
+                                                now: { self.t0.addingTimeInterval(15) })
+        conflictsSeen += try engineAInPush.sync().conflicts.count
+        for at in stride(from: 40.0, through: 60.0, by: 10.0) {
+            conflictsSeen += try engineB(at).sync().conflicts.count
+            conflictsSeen += try engineA(at + 1).sync().conflicts.count
+        }
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "edit on A"
+            || storeB.take(id: take.id)?.primaryText == "edit on A"
+            || cloudText(take.id) == "edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
+    }
+
+    /// Found by the TLC model checker (with the step-1 and unverified fixes modelled). A pass that
+    /// cannot read the Take's file yet (not downloaded: `skipped`) still moves the watermark past
+    /// the other device's version without applying it. That version then looks already seen, so
+    /// this device's next edit, made on the old version, is kept and uploaded over it.
+    func testSkippedBlobDoesNotLetTheNextEditOverwriteAnUnseenVersion() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "edit on A", at: 10)
+        try engineA(11).sync()
+
+        // B's pass finds A's version declared but its file not downloaded yet.
+        let notYet = BlobNotYetDownloadedFolder(cloud)
+        let skipped = try TestFixtures.engine(store: storeB, cloud: notYet, keys: k, deviceId: deviceB,
+                                              now: { self.t0.addingTimeInterval(20) }).sync()
+        XCTAssertEqual(skipped.skipped, [take.id], "the setup: B skipped A's version")
+
+        var conflictsSeen = 0
+        try edit(storeB, take.id, "edit on B, made on base", at: 30)
+        conflictsSeen += try engineB(31).sync().conflicts.count
+        conflictsSeen += try engineA(40).sync().conflicts.count
+        conflictsSeen += try engineB(41).sync().conflicts.count
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "edit on A"
+            || storeB.take(id: take.id)?.primaryText == "edit on A"
+            || cloudText(take.id) == "edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's edit was lost with no conflict shown on either device")
+    }
+
+    /// Found by reading a TLC convergence trace. No overlapping syncs: A edits offline, B syncs
+    /// (nothing new), A comes back online and syncs, B edits and syncs. B's watermark is the time
+    /// of B's last sync, but A's version carries the time A made the edit, which is earlier, so
+    /// B reads it as unchanged since its last sync, keeps its own edit and uploads it over A's.
+    func testOfflineEditUploadedAfterTheOtherDevicesSyncIsNeverLostSilently() throws {
+        var take = TestFixtures.richTake()
+        take.primaryText = "base"
+        take.modifiedAt = t0
+        try storeA.upsert(take)
+        try engineA(1).sync()
+        try engineB(2).sync()
+
+        try edit(storeA, take.id, "offline edit on A", at: 10)   // A is offline
+        var conflictsSeen = try engineB(20).sync().conflicts.count
+        conflictsSeen += try engineA(30).sync().conflicts.count  // A back online
+        XCTAssertEqual(try cloudText(take.id), "offline edit on A", "the setup: A's edit reached the folder")
+
+        try edit(storeB, take.id, "edit on B", at: 40)
+        conflictsSeen += try engineB(41).sync().conflicts.count
+        conflictsSeen += try engineA(50).sync().conflicts.count
+        conflictsSeen += try engineB(51).sync().conflicts.count
+
+        let survives = try storeA.take(id: take.id)?.primaryText == "offline edit on A"
+            || storeB.take(id: take.id)?.primaryText == "offline edit on A"
+            || cloudText(take.id) == "offline edit on A"
+            || conflictsSeen > 0
+        XCTAssertTrue(survives, "A's offline edit was lost with no conflict shown on either device")
+    }
+}
+
+/// A view of a cloud folder that runs a closure once, just before the first read of one file:
+/// how a test lands another device's sync at an exact point inside this device's sync.
+private final class InterleavingCloudFolder: CloudFolder {
+    private let base: CloudFolder
+    private var trigger: (name: String, action: () throws -> Void)?
+    private(set) var fired = false
+
+    init(_ base: CloudFolder) { self.base = base }
+
+    func beforeFirstRead(of name: String, _ action: @escaping () throws -> Void) {
+        trigger = (name, action)
+    }
+
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if let t = trigger, t.name == name {
+            trigger = nil
+            fired = true
+            try t.action()
+        }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+}
+
+/// Runs `beforeFirstBlobRead` once, just before the first .clk read: another device's sync
+/// landing between this device's manifest read and its blob read.
+private final class MidPullFolder: CloudFolder {
+    private let base: CloudFolder
+    var beforeFirstBlobRead: (() -> Void)?
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if name.hasSuffix(".clk"), let hook = beforeFirstBlobRead {
+            beforeFirstBlobRead = nil
+            hook()
+        }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
+
+/// Runs `beforeSecondManifestRead` once, just before the second manifest read: in `sync()`,
+/// between the pull and the push.
+private final class SecondManifestReadFolder: CloudFolder {
+    private let base: CloudFolder
+    private var manifestReads = 0
+    var beforeSecondManifestRead: (() -> Void)?
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if name == Manifest.fileName {
+            manifestReads += 1
+            if manifestReads == 2 { beforeSecondManifestRead?() }
+        }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
+
+/// Hides every .clk from reads while `hideBlobs` is set: a file the manifest names that the
+/// provider has not delivered yet. Writes go through.
+private final class HidingFolder: CloudFolder {
+    private let base: CloudFolder
+    var hideBlobs = false
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if hideBlobs, name.hasSuffix(".clk") { return nil }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
+
+/// The folder as a device sees it before a file has downloaded: every .clk read finds nothing.
+private final class BlobNotYetDownloadedFolder: CloudFolder {
+    private let base: CloudFolder
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? { name.hasSuffix(".clk") ? nil : try base.read(name) }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
+
+/// Runs `afterFirstBlobWrite` once, just after the first .clk write: inside a push, before its
+/// manifest write.
+private final class AfterFirstBlobWriteFolder: CloudFolder {
+    private let base: CloudFolder
+    var afterFirstBlobWrite: (() -> Void)?
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? { try base.read(name) }
+    func write(_ data: Data, to name: String) throws {
+        try base.write(data, to: name)
+        if name.hasSuffix(".clk"), let hook = afterFirstBlobWrite {
+            afterFirstBlobWrite = nil
+            hook()
+        }
+    }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
+
+/// The folder as a device sees it before another device's lock file has reached it: the first
+/// read of the lock finds nothing. Everything else, including its own lock read-back, is current.
+private final class LockNotYetVisibleFolder: CloudFolder {
+    private let base: CloudFolder
+    private var hidden = true
+    init(_ base: CloudFolder) { self.base = base }
+    func listFiles() throws -> [String] { try base.listFiles() }
+    func read(_ name: String) throws -> Data? {
+        if name == SyncLock.fileName, hidden { hidden = false; return nil }
+        return try base.read(name)
+    }
+    func write(_ data: Data, to name: String) throws { try base.write(data, to: name) }
+    func writeAtomically(_ data: Data, to name: String) throws { try base.writeAtomically(data, to: name) }
+    func delete(_ name: String) throws { try base.delete(name) }
+    func secureDelete(_ name: String) throws { try base.secureDelete(name) }
+}
