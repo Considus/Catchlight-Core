@@ -13,11 +13,11 @@ java -cp tla2tools.jar tlc2.TLC -workers auto -config CatchlightSync.cfg Catchli
 | `CatchlightSyncStrict.cfg` | Control: no exemption for the designed edit-versus-delete rule, so it must fail. A pass means the model cannot see a loss. | Fails, as it must |
 | `CatchlightSync.cfg` | No edit lost unless a user gave it up or a newer deletion removed it; sync never brings back a deleted version. | Fails: known sync bugs |
 | `CatchlightSyncLive.cfg` | Once users stop, every device and the folder agree. | Fails: known sync bugs |
-| `CatchlightSyncRecords.cfg` | As `CatchlightSync.cfg`, with the per-Take sync record (`FixedRecords`) and no lock race. | Passes |
+| `CatchlightSyncRecords.cfg` | As `CatchlightSync.cfg`, with the per-Take sync record (`FixedRecords`), the manifest entry's `builtOn` (`FixedBuiltOn`) and no lock race. | Passes |
 | `CatchlightSyncRecordsUpgrade.cfg` | The same, starting with no records: the first syncs after updating. | Passes |
 | `CatchlightSyncRecordsLive.cfg` | Convergence with the record. | Passes |
 | `CatchlightSyncRecordsStrict.cfg` | Control with the record: must fail. | Fails, as it must |
-| `CatchlightSyncRecordsRaces.cfg` | The record with one lock race (two pushes past the advisory lock at once). | Fails: a push can still write over another's upload unseen (see its header) |
+| `CatchlightSyncRecordsRaces.cfg` | The same with one lock race (two pushes past the advisory lock at once). | Fails on two other race paths, not on a manifest write over an upload (see its header) |
 
 The known bugs each get a failing test, added with their fixes. The record configs set `FixedUnverified`, the couldn't-verify queue's fix in Catchlight-iOS. The `Fixed…` constants model proposed fixes, so a fix can be checked here before it is built: set one to `TRUE` and the checker looks for the next problem.
 
