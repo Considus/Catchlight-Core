@@ -71,6 +71,12 @@ public struct ManifestEntry: Codable, Equatable, Sendable {
     public let hmac: String            // hex-encoded HMAC-SHA-256 of the .clk blob bytes
     /// nil for a Take; otherwise the item's kind, e.g. `ManifestEntry.Kind.script`.
     public let kind: String?
+    /// Which upload of each device this version was built on: device id (uppercase UUID) to
+    /// that device's upload's `modified` stamp. The uploader's own new version is one of them;
+    /// the rest come from the entry it replaced. nil in an entry written by a build without the
+    /// field (before Core 2.1.0), which names nothing. See `SyncEngine.uploadLeftOut` and
+    /// spec/CatchlightSyncRecordsRaces.cfg.
+    public let builtOn: [String: String]?
 
     public enum Kind {
         public static let take = "take"
@@ -80,15 +86,17 @@ public struct ManifestEntry: Codable, Equatable, Sendable {
     /// True when this device should treat the entry as a Take.
     public var isTake: Bool { kind == nil || kind == Kind.take }
 
-    public init(uuid: UUID, modified: String, hmac: String, kind: String? = nil) {
+    public init(uuid: UUID, modified: String, hmac: String, kind: String? = nil,
+                builtOn: [String: String]? = nil) {
         self.uuid = uuid
         self.modified = modified
         self.hmac = hmac
         // A Take is stored as the absence of a kind, never as "take", so one item has one encoding.
         self.kind = kind == Kind.take ? nil : kind
+        self.builtOn = builtOn?.isEmpty == true ? nil : builtOn
     }
 
-    enum CodingKeys: String, CodingKey { case uuid, modified, hmac, kind }
+    enum CodingKeys: String, CodingKey { case uuid, modified, hmac, kind, builtOn }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -96,7 +104,8 @@ public struct ManifestEntry: Codable, Equatable, Sendable {
         self.init(uuid: try c.decode(UUID.self, forKey: .uuid),
                   modified: try c.decode(String.self, forKey: .modified),
                   hmac: try c.decode(String.self, forKey: .hmac),
-                  kind: kind)
+                  kind: kind,
+                  builtOn: try c.decodeIfPresent([String: String].self, forKey: .builtOn))
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -105,6 +114,9 @@ public struct ManifestEntry: Codable, Equatable, Sendable {
         try c.encode(modified, forKey: .modified)
         try c.encode(hmac, forKey: .hmac)
         if let kind { try c.encode(kind, forKey: .kind) }
+        // Written only when set, so an entry without it encodes byte for byte as before. A build
+        // without the field ignores the key when it reads, and drops it when it writes.
+        if let builtOn { try c.encode(builtOn, forKey: .builtOn) }
     }
 }
 

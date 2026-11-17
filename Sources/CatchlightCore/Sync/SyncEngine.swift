@@ -454,6 +454,7 @@ public final class SyncEngine {
             guard let e = entries[id] else { continue }
             var record = try store.syncRecord(id: id) ?? SyncRecord()
             record.uploaded = e.modified
+            record.published = e.modified
             try store.setSyncRecord(record, id: id)
         }
 
@@ -635,11 +636,17 @@ public final class SyncEngine {
         // a Take into a Script, or back, is a change of kind on the same id, but only
         // over an entry of a kind it holds: a newer client's kind is kept, as on the phone.
         let existing = entries[take.id]
+        let modified = ISO8601.string(from: take.modifiedAt)
+        // What this version was built on: the entry it replaces, which the push only writes over
+        // when this device has had it (`unseenVersion`), plus this device's own upload.
+        var builtOn = existing?.builtOn ?? [:]
+        builtOn[deviceId.uuidString] = modified
         entries[take.id] = ManifestEntry(
             uuid: take.id,
-            modified: ISO8601.string(from: take.modifiedAt),
+            modified: modified,
             hmac: signer.blobHMACHex(bytes),
-            kind: holdsScripts && existing.map(holds) != false ? take.kind : existing?.kind
+            kind: holdsScripts && existing.map(holds) != false ? take.kind : existing?.kind,
+            builtOn: builtOn
         )
         report.uploaded.append(take.id)
     }
@@ -867,14 +874,17 @@ public final class SyncEngine {
             // This device's own upload, replaced before this device saw it in a pull: the other
             // device wrote over it, so had it, and this side has no change. Unless this pair has
             // been shown to the user and not settled yet: then it stays the user's to choose.
+            let leftOut = Self.uploadLeftOut(entry, stamp: stamp, record: record, device: deviceId)
             let ownUploadReplaced = stamp != nil && stamp == record?.uploaded
                 && !(record?.shown == entry.modified && record?.shownLocal == stamp)
             if local != nil, let agreed = record?.agreed {
-                localChanged = stamp != agreed && !ownUploadReplaced
+                localChanged = (stamp != agreed && !ownUploadReplaced) || leftOut
                 remoteChanged = entry.modified != agreed
             } else if local != nil, let uploaded = record?.uploaded {
-                // This device's own upload is the last version it knows the folder had.
-                localChanged = stamp != uploaded
+                // This device's own upload is the last version it knows the folder had. (Left out
+                // here only after a deletion cleared the record and a restore was uploaded: no
+                // test reaches it; kept so the rule reads the same in every branch.)
+                localChanged = stamp != uploaded || leftOut
                 remoteChanged = true
             } else if let local {
                 localChanged = ownUploadReplaced ? false
@@ -920,6 +930,20 @@ public final class SyncEngine {
     }
 
     // MARK: - Sync records (2026-11-17; see SyncRecord.swift)
+
+    /// This device's copy is still its own latest upload, and the folder's version was built on
+    /// some other upload of this device, or none: a push that never had this upload wrote over
+    /// it (two pushes past the advisory lock at once). The upload is a change the folder lacks.
+    ///
+    /// An entry with no `builtOn` names nothing, so it counts as left out too. Every push writes
+    /// back the whole manifest it read, so a push that raced can put back an entry from before
+    /// the field, for any Take. The cost: while a device still runs a build without the field,
+    /// its edit over this device's upload is shown once as a conflict here, never taken unseen.
+    static func uploadLeftOut(_ entry: ManifestEntry, stamp: String?, record: SyncRecord?,
+                              device: UUID) -> Bool {
+        guard let stamp, stamp == record?.published, entry.modified != stamp else { return false }
+        return entry.builtOn?[device.uuidString] != stamp
+    }
 
     /// The pull's first look at an entry, before its file is read. This device's own upload,
     /// now in the folder, becomes the agreed version. So does a version shown to the user, once
