@@ -72,7 +72,6 @@ final class DataModelTests: XCTestCase {
 
     // §12.2 — locationReminder is always nil in v1.0.
     func testLocationReminderNilInV1() {
-        // Default and fixture Takes never populate locationReminder.
         XCTAssertNil(Take(blocks: [.textLine("x")]).locationReminder)
         XCTAssertNil(TestFixtures.richTake().locationReminder)
     }
@@ -271,7 +270,6 @@ final class DataModelTests: XCTestCase {
         XCTAssertEqual(ISO8601.date(from: "2026-05-28T09:00:00+0200"), secondsOnly)
         XCTAssertEqual(ISO8601.date(from: "2026-05-28T08:30:00.123456+01:30"), expected)
 
-        // Garbage still rejected.
         XCTAssertNil(ISO8601.date(from: "not-a-date"))
         XCTAssertNil(ISO8601.date(from: "2026-05-28T07:00:00"))
         XCTAssertNil(ISO8601.date(from: "2026-05-28"))

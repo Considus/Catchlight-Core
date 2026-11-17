@@ -339,7 +339,7 @@ public struct Take: Identifiable, Codable, Equatable, Sendable {
     @discardableResult
     public mutating func convertToChecklist() -> UUID? {
         let item = ChecklistItem(text: "")
-        blocks.append(.check(item))   // append works for both empty and content-ful Takes
+        blocks.append(.check(item))
         return item.id
     }
 
