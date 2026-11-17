@@ -8,7 +8,10 @@ import CatchlightCoreTestSupport
 @testable import CatchlightCore
 
 /// Two pushes overlapping inside one push: B cannot see A's lock (cloud propagation delay),
-/// and B's whole sync lands after A's push read the manifest and before A writes it.
+/// and B's whole sync lands after A's push read the manifest and before A writes it. A's
+/// manifest write then replaces B's upload. Expected to pass: B edits again, so its next pull
+/// finds both sides changed and shows the conflict. Without that second edit this is the lock
+/// race the per-Take record does not close (spec/CatchlightSyncRecordsRaces.cfg).
 final class SyncManifestOverwriteProbeTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
     private let k = KeyHierarchy(masterKey: SymmetricKey(size: .bits256))
@@ -56,7 +59,6 @@ final class SyncManifestOverwriteProbeTests: XCTestCase {
         conflictsSeen += try engine(storeB, cloud, deviceB, 41).sync().conflicts.count
 
         let texts = [try storeA.take(id: take.id)?.primaryText, try storeB.take(id: take.id)?.primaryText, try cloudText(take.id)]
-        print("PROBE texts A,B,cloud:", texts, "conflicts:", conflictsSeen)
         XCTAssertTrue(texts.contains("edit on A") || conflictsSeen > 0, "A's edit lost with no conflict shown")
         XCTAssertTrue(texts.contains("second edit on B") || conflictsSeen > 0, "B's edit lost with no conflict shown")
     }

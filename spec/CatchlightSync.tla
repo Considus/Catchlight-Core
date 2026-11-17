@@ -213,7 +213,10 @@ PullStart(d) ==
                         ELSE IF T0 # NoVal /\ mTomb # NoVal /\ mTomb >= T0 THEN NoVal
                         ELSE T0]
           /\ lostByRule' = IF doDel THEN lostByRule \cup {L.c} ELSE lostByRule
-          /\ rec' = IF FixedRecords /\ doDel THEN [rec EXCEPT ![d] = NoRec] ELSE rec
+          \* The record goes with a pulled deletion, and once this device's own deletion
+          \* is confirmed in the folder while the Take is gone here.
+          /\ rec' = IF FixedRecords /\ (doDel \/ (L = NoVal /\ T0 # NoVal /\ mTomb # NoVal /\ mTomb >= T0))
+                     THEN [rec EXCEPT ![d] = NoRec] ELSE rec
           /\ IF mEntry # NoVal /\ mTomb = NoVal
                THEN /\ pc' = [pc EXCEPT ![d] = "pullBlob"]
                     /\ pullSnap' = [pullSnap EXCEPT ![d] =
@@ -253,8 +256,8 @@ Classify(d, S, B) ==
     LET L == local[d]
         r == IF FixedRecords THEN Refreshed(d, S) ELSE rec[d]
         \* With records, a newer local edit is left to push only over a version this
-        \* device has agreed with (or with no record, as before).
-        newerOk == ~FixedRecords \/ r.agreed = NoVal \/ r.agreed = S.entry.m
+        \* device has had (agreed, or its own upload); otherwise the user is shown it.
+        newerOk == ~FixedRecords \/ S.entry.m \in ({r.agreed, r.uploaded} \ {NoVal})
     IN
     /\ IF L = NoVal /\ S.tsnap # NoVal
          THEN /\ UNCHANGED <<unv, repair>> /\ rec' = [rec EXCEPT ![d] = r]

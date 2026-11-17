@@ -435,7 +435,9 @@ public final class SyncEngine {
         // Not cancellable: the manifest is written, and the rest of this push is bookkeeping.
         // A file that can't be removed is left over with no entry naming it, which nothing
         // reads, so a failure here is not the push's: it is logged and the push carries on.
-        for id in blobsToDelete.sorted(by: { $0.uuidString < $1.uuidString }) {
+        // Only files the manifest no longer names: a Take restored while this push ran wins
+        // over its deletion (step 3) and step 4 has just uploaded it again.
+        for id in blobsToDelete.sorted(by: { $0.uuidString < $1.uuidString }) where entries[id] == nil {
             do {
                 try cloud.delete("\(id.uuidString).clk")
             } catch {
@@ -722,6 +724,10 @@ public final class SyncEngine {
                 return remote >= local.deletedAt
             }
             try store.purgeTombstones(ids: confirmed.map(\.id))
+            // The deletion is in the folder now: a Take gone from this device needs no record.
+            for id in confirmed.map(\.id) where try store.take(id: id) == nil {
+                try store.setSyncRecord(nil, id: id)
+            }
         }
 
         // 3–6. Per-entry verify, decrypt, conflict-detect, merge.
@@ -993,11 +999,11 @@ public final class SyncEngine {
                 report.repairCandidates.append(entry.uuid)
                 return
             }
-            // A newer local edit over a version this device has had (or, with no record, any):
-            // push step 1 or 4 uploads it. Over a version it never had, push won't, so the
-            // user decides.
+            // A newer local edit over a version this device has had: push step 1 or 4 uploads
+            // it. Over a version it never had, or with no record to show it has, push won't
+            // (`leaveForNextPull`), so the user decides.
             if let entryModified = ISO8601.date(from: entry.modified), local.modifiedAt > entryModified,
-               record?.agreed.map({ $0 == entry.modified }) ?? true {
+               Self.versionsHad(record).contains(entry.modified) {
                 return
             }
             report.unverified.append(UnverifiedCopy(id: entry.uuid, local: local, cloud: cloudTake))

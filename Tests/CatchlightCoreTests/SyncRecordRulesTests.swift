@@ -217,6 +217,98 @@ final class SyncRecordRulesTests: XCTestCase {
                       "B's edit was replaced by A's with nothing shown")
         XCTAssertEqual(try storeB.take(id: id)?.primaryText, "edit on B", "B keeps its edit while unsettled")
     }
+
+    /// A Take restored while a push runs, after the push read its deletion: the restore wins
+    /// (it is newer), step 4 uploads it, and the file removal that follows the manifest write
+    /// must leave that fresh file alone.
+    func testATakeRestoredDuringThePush_keepsItsFreshlyUploadedFile() throws {
+        let id = try synced()
+        let original = try XCTUnwrap(storeA.take(id: id))
+        try storeA.delete(id: id)
+        let deletedAt = try XCTUnwrap(storeA.tombstones().first?.deletedAt)
+        var restored = original
+        restored.primaryText = "restored"
+        restored.modifiedAt = deletedAt.addingTimeInterval(1)   // after the deletion
+        let racing = RestoreAfterTombstonesReadStore(wrapping: storeA, restore: restored)
+
+        _ = try TestFixtures.engine(store: racing, cloud: cloud, keys: k, deviceId: deviceA,
+                                    now: { deletedAt.addingTimeInterval(2) }).pushOutbound()
+
+        XCTAssertTrue(racing.restored)
+        XCTAssertEqual(try cloudText(id), "restored", "the manifest names a file that is gone")
+    }
+
+    /// A device with no record yet holds a newer edit, and the folder's copy fails verification
+    /// against a version the manifest names. Push won't upload over a version this device can't
+    /// show it has had, so the pull must show the copy: otherwise the edit sits unsent and
+    /// nothing tells the user.
+    func testNoRecordYet_anUnverifiedCopyWithANewerLocalEdit_isShown() throws {
+        let id = try synced()
+        let staleBytes = try XCTUnwrap(cloud.read("\(id.uuidString).clk"))
+        try edit(storeA, id, "edit on A", at: 10)
+        try syncA(11)
+        try cloud.write(staleBytes, to: "\(id.uuidString).clk")   // the provider kept the old file
+        storeB.removeAllSyncRecords()                               // B has just updated
+        try edit(storeB, id, "edit on B", at: 20)
+
+        let report = try syncB(30)
+
+        XCTAssertEqual(report.unverified.map(\.id), [id])
+        XCTAssertEqual(try storeB.take(id: id)?.primaryText, "edit on B")
+    }
+
+    /// Once this device's deletion is in the folder, the deleted Take's record goes too: rows
+    /// for deleted Takes would otherwise pile up in the store for good.
+    func testARecord_isClearedOnceThisDevicesDeletionReachesTheFolder() throws {
+        let id = try synced()
+        XCTAssertNotNil(try storeA.syncRecord(id: id))
+        try storeA.delete(id: id)
+        try syncA(10)                                      // the deletion goes out
+        try syncA(20)                                      // and is seen in a pull
+
+        XCTAssertTrue(try storeA.tombstones().isEmpty)
+        XCTAssertNil(try storeA.syncRecord(id: id))
+    }
+}
+
+/// Restores a Take once, between the push reading its tombstones and reading the Takes:
+/// the user restoring it while the push runs.
+private final class RestoreAfterTombstonesReadStore: TakeStore {
+    private let wrapped: InMemoryTakeStore
+    private let restore: Take
+    private var tombstonesRead = false
+    private(set) var restored = false
+    init(wrapping wrapped: InMemoryTakeStore, restore: Take) { self.wrapped = wrapped; self.restore = restore }
+
+    func tombstones() throws -> [Tombstone] {
+        let out = try wrapped.tombstones()
+        tombstonesRead = true
+        return out
+    }
+    func allTakes() throws -> [Take] {
+        if tombstonesRead, !restored { restored = true; try wrapped.upsert(restore) }
+        return try wrapped.allTakes()
+    }
+    func upsert(_ take: Take) throws { try wrapped.upsert(take) }
+    func delete(id: UUID) throws { try wrapped.delete(id: id) }
+    func take(id: UUID) throws -> Take? { try wrapped.take(id: id) }
+    func takesModified(since date: Date?) throws -> [Take] { try wrapped.takesModified(since: date) }
+    func search(_ query: String) throws -> [Take] { try wrapped.search(query) }
+    func upsert(_ sequence: CatchlightSequence) throws { try wrapped.upsert(sequence) }
+    func sequence(id: UUID) throws -> CatchlightSequence? { try wrapped.sequence(id: id) }
+    func allSequences() throws -> [CatchlightSequence] { try wrapped.allSequences() }
+    func deleteSequence(id: UUID) throws { try wrapped.deleteSequence(id: id) }
+    func currentObie() throws -> Take? { try wrapped.currentObie() }
+    func setObie(id: UUID, replaceExisting: Bool) throws { try wrapped.setObie(id: id, replaceExisting: replaceExisting) }
+    func lastSyncDate() -> Date? { wrapped.lastSyncDate() }
+    func setLastSyncDate(_ date: Date) { wrapped.setLastSyncDate(date) }
+    func syncRecord(id: UUID) throws -> SyncRecord? { try wrapped.syncRecord(id: id) }
+    func setSyncRecord(_ record: SyncRecord?, id: UUID) throws { try wrapped.setSyncRecord(record, id: id) }
+    func purgeTombstones(ids: [UUID]) throws { try wrapped.purgeTombstones(ids: ids) }
+    func applyRemote(_ take: Take) throws -> Bool { try wrapped.applyRemote(take) }
+    func release(id: UUID, ifNotModifiedAfter cutoff: Date) throws -> Bool {
+        try wrapped.release(id: id, ifNotModifiedAfter: cutoff)
+    }
 }
 
 /// Runs `action` once, just before the first read of `name`.
