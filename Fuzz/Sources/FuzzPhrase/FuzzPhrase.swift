@@ -3,7 +3,7 @@
 //
 //  The payload is what a user types or pastes into the recovery field. Core ships no
 //  wordlist (the apps inject the official English list), so this uses the same synthetic
-//  2048-word list as the unit tests ("w0" … "w2047"); fuzz.dict carries its words.
+//  2048-word list as the unit tests ("w0" … "w2047"); phrase.dict carries its words.
 //  Mode (first byte, low bit): 0 splits on whitespace and newlines, as a paste is split;
 //  1 treats the payload as 16 bytes of entropy and round-trips it through the mnemonic.
 //

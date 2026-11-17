@@ -179,7 +179,6 @@ final class TakeStoreBehaviourTests: XCTestCase {
             }
             XCTAssertEqual(existing, a.id)
         }
-        // First Obie is still the Obie.
         XCTAssertEqual(try store.currentObie()?.id, a.id)
     }
 
@@ -192,7 +191,6 @@ final class TakeStoreBehaviourTests: XCTestCase {
         XCTAssertEqual(current.id, b.id, "New Obie must be b")
         let oldA = try XCTUnwrap(try store.take(id: a.id))
         XCTAssertFalse(oldA.isObie, "Previous Obie must be demoted")
-        // Exactly one Obie still.
         let obieCount = try store.allTakes().filter(\.isObie).count
         XCTAssertEqual(obieCount, 1)
     }

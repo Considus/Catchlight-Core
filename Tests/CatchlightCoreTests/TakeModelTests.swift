@@ -71,12 +71,9 @@ final class TakeModelTests: XCTestCase {
     }
 
     func testTake_isMarkedDone_acrossTaskAndReminder() {
-        // A plain note is never "done".
         XCTAssertFalse(Take(blocks: [.textLine("just a thought")]).isMarkedDone)
-        // Task: done only when every item is ticked.
         XCTAssertFalse(Take(blocks: [.checkItem("a"), .checkItem("b", isComplete: true)]).isMarkedDone)
         XCTAssertTrue(Take(blocks: [.checkItem("a", isComplete: true)]).isMarkedDone)
-        // Reminder: tracks isDone.
         var rem = Take(blocks: [.textLine("call back")])
         rem.timeReminder = TimeReminder(scheduledDate: Date(), notificationIdentifier: "x")
         XCTAssertFalse(rem.isMarkedDone, "an active reminder is not done")
