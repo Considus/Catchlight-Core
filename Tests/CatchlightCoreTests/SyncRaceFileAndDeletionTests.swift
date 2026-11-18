@@ -88,6 +88,19 @@ final class SyncRaceFileAndDeletionTests: XCTestCase {
         XCTAssertEqual(try storeB.tombstones().map(\.id), [take.id])
     }
 
+    /// A deletion the folder never confirmed is kept past retention, as before: it alone stops
+    /// the pull bringing the Take back from a folder that still lists it. Only confirmed
+    /// deletions go once past retention.
+    func testUnconfirmedDeletion_isKeptPastRetention() throws {
+        let take = try syncedTake()
+        try storeB.delete(id: take.id)
+        let deletedAt = try XCTUnwrap(storeB.tombstones().first?.deletedAt)
+        let pastRetention = deletedAt.timeIntervalSince(t0) + Manifest.tombstoneRetention + 3600
+        try engine(storeB, cloud, deviceB, pastRetention).pullInbound()   // the folder still lists it
+        XCTAssertEqual(try storeB.tombstones().map(\.id), [take.id], "an unconfirmed deletion was dropped")
+        XCTAssertNil(try storeB.take(id: take.id))
+    }
+
     // MARK: - The Take's file and its entry written by different pushes
 
     /// A's push writes its file, then B's whole sync runs before A writes the manifest: B finds a

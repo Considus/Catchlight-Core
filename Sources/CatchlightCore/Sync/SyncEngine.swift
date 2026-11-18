@@ -741,8 +741,9 @@ public final class SyncEngine {
             // one can still write its older edit back over the deletion after this pull has seen
             // it; kept, the deletion refuses that edit here (`applyRemote`, and the pull's own
             // check) and the next push sends it again. Past retention every device has had time
-            // to see it, and push no longer sends it either (step 3).
-            let expired = pendingLocal.filter {
+            // to see it, and push no longer sends it either (step 3). A deletion the folder never
+            // confirmed stays, as before: it alone keeps the pull from bringing the Take back.
+            let expired = confirmed.filter {
                 now().timeIntervalSince($0.deletedAt) > Manifest.tombstoneRetention
             }
             try store.purgeTombstones(ids: expired.map(\.id))
