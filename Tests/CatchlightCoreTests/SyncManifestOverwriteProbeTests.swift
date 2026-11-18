@@ -10,8 +10,8 @@ import CatchlightCoreTestSupport
 /// Two pushes overlapping inside one push: B cannot see A's lock (cloud propagation delay),
 /// and B's whole sync lands after A's push read the manifest and before A writes it. A's
 /// manifest write then replaces B's upload. Expected to pass: B edits again, so its next pull
-/// finds both sides changed and shows the conflict. Without that second edit this is the lock
-/// race the per-Take record does not close (spec/CatchlightSyncRecordsRaces.cfg).
+/// finds both sides changed and shows the conflict. Without that second edit, the manifest
+/// entry's `builtOn` field shows it (SyncBuiltOnTests).
 final class SyncManifestOverwriteProbeTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
     private let k = KeyHierarchy(masterKey: SymmetricKey(size: .bits256))

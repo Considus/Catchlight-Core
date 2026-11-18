@@ -21,6 +21,11 @@
 (* are named by their edit stamp, and each device records the version it  *)
 (* last agreed with and its own upload not yet seen in a pull.            *)
 (*                                                                         *)
+(* FixedBuiltOn models the manifest entry's builtOn field (Core 2.1.0): for *)
+(* each device, which of its uploads the folder's version was built on.     *)
+(* A device whose copy is still its own latest upload treats a folder       *)
+(* version that names a different upload of it as one that never had it.   *)
+(*                                                                         *)
 (* Content ids: every user edit makes a new content, numbered by the clock *)
 (* tick it was made at, so a content can be traced wherever it is copied.  *)
 (***************************************************************************)
@@ -42,9 +47,11 @@ CONSTANTS
                     \* let a hostile schedule starve one device's push of the lock forever)
     UpgradeStart,   \* TRUE (with FixedRecords): both devices start with no records, as on
                     \* the first sync after updating from a build without them
-    FixedRecords    \* TRUE: model the per-Take sync record (SyncRecord.swift): each device
+    FixedRecords,   \* TRUE: model the per-Take sync record (SyncRecord.swift): each device
                     \* compares with the version it last agreed with, not edit times with
                     \* its last-sync time, and push never uploads over a version it has not had
+    FixedBuiltOn    \* TRUE (with FixedRecords): each upload records in the manifest entry which
+                    \* upload of each device it was built on (ManifestEntry.builtOn)
 
 VARIABLES
     now,        \* global clock; ticks only on user actions
@@ -67,16 +74,19 @@ VARIABLES
     discarded,  \* contents a user knowingly gave up (edited over, deleted, chose against)
     deleted,    \* deletions a user made: [dev, t]
     lostByRule, \* contents removed by a pulled tombstone newer than them (designed rule)
-    rec         \* [Dev -> record]: the device's SyncRecord for the Take (edit stamps)
+    rec,        \* [Dev -> record]: the device's SyncRecord for the Take (edit stamps)
+    mBuilt      \* the manifest entry's builtOn: [Dev -> stamp or NoVal], or NoVal when the
+                \* entry has no such field (written by an older build, or no entry)
 
-vars == <<now, local, tomb, lastSync, pair, unv, blob, mEntry, mTomb, lock, pc,
+vars == <<now, local, tomb, lastSync, pair, unv, blob, mEntry, mBuilt, mTomb, lock, pc,
           pullSnap, pushPlan, repair, races, resolves, authored, discarded, deleted,
-          lostByRule, rec>>
+          lostByRule, rec, mBuilt>>
 
 Ver(c, m) == [c |-> c, m |-> m]
 V0 == Ver(0, 0)
 Held(d) == pair[d] # NoVal
-NoRec == [agreed |-> NoVal, uploaded |-> NoVal, shown |-> NoVal, shownLocal |-> NoVal]
+NoRec == [agreed |-> NoVal, uploaded |-> NoVal, shown |-> NoVal, shownLocal |-> NoVal,
+          published |-> NoVal]
 
 -----------------------------------------------------------------------------
 Init ==
@@ -103,6 +113,8 @@ Init ==
     /\ lostByRule = {}
     \* Synced by a build with records: both agree on V0. (FALSE runs ignore rec.)
     /\ rec = [d \in Dev |-> IF UpgradeStart THEN NoRec ELSE [NoRec EXCEPT !.agreed = 0]]
+    \* The first entry names nothing, as one written before the field.
+    /\ mBuilt = NoVal
 
 -----------------------------------------------------------------------------
 (* User actions. They may land at any point, including mid-sync.           *)
@@ -115,7 +127,7 @@ Edit(d) ==
     /\ local' = [local EXCEPT ![d] = Ver(now + 1, now + 1)]
     /\ authored' = authored \cup {now + 1}
     /\ discarded' = discarded \cup {local[d].c}
-    /\ UNCHANGED <<tomb, lastSync, pair, unv, blob, mEntry, mTomb, lock, pc,
+    /\ UNCHANGED <<tomb, lastSync, pair, unv, blob, mEntry, mBuilt, mTomb, lock, pc,
                    pullSnap, pushPlan, repair, races, resolves, deleted, lostByRule, rec>>
 
 \* store.delete: removes the Take and records a tombstone.
@@ -128,7 +140,7 @@ Delete(d) ==
     /\ tomb' = [tomb EXCEPT ![d] = now + 1]
     /\ discarded' = discarded \cup {local[d].c}
     /\ deleted' = deleted \cup {[dev |-> d, t |-> now + 1]}
-    /\ UNCHANGED <<lastSync, pair, unv, blob, mEntry, mTomb, lock, pc,
+    /\ UNCHANGED <<lastSync, pair, unv, blob, mEntry, mBuilt, mTomb, lock, pc,
                    pullSnap, pushPlan, repair, races, resolves, authored, lostByRule, rec>>
 
 \* ConflictQueue.resolve (Catchlight-iOS): keep this device's version as it is NOW
@@ -147,7 +159,7 @@ Resolve(d, keepLocal) ==
     /\ resolves' = resolves + 1
     /\ tomb' = [tomb EXCEPT ![d] = NoVal]
     /\ pair' = [pair EXCEPT ![d] = NoVal]
-    /\ UNCHANGED <<lastSync, unv, blob, mEntry, mTomb, lock, pc, pullSnap, pushPlan,
+    /\ UNCHANGED <<lastSync, unv, blob, mEntry, mBuilt, mTomb, lock, pc, pullSnap, pushPlan,
                    repair, races, authored, deleted, lostByRule, rec>>
 
 \* ConflictQueue.keepPhone: the QUEUED copy of this device's version, stamped fresh.
@@ -162,7 +174,7 @@ KeepPhone(d) ==
     /\ resolves' = resolves + 1
     /\ tomb' = [tomb EXCEPT ![d] = NoVal]
     /\ unv' = [unv EXCEPT ![d] = NoVal]
-    /\ UNCHANGED <<lastSync, pair, blob, mEntry, mTomb, lock, pc, pullSnap, pushPlan,
+    /\ UNCHANGED <<lastSync, pair, blob, mEntry, mBuilt, mTomb, lock, pc, pullSnap, pushPlan,
                    repair, races, authored, deleted, lostByRule, rec>>
 
 \* With the fix, a stale item is dropped and nothing is written.
@@ -171,7 +183,7 @@ DropStaleUnverified(d) ==
     /\ unv[d] # NoVal
     /\ local[d] # unv[d].l
     /\ unv' = [unv EXCEPT ![d] = NoVal]
-    /\ UNCHANGED <<now, local, tomb, lastSync, pair, blob, mEntry, mTomb, lock, pc, pullSnap,
+    /\ UNCHANGED <<now, local, tomb, lastSync, pair, blob, mEntry, mBuilt, mTomb, lock, pc, pullSnap,
                    pushPlan, repair, races, resolves, authored, discarded, deleted, lostByRule, rec>>
 
 \* ConflictQueue.keepCloud: the cloud copy that decrypted, stamped fresh.
@@ -186,7 +198,7 @@ KeepCloud(d) ==
     /\ resolves' = resolves + 1
     /\ tomb' = [tomb EXCEPT ![d] = NoVal]
     /\ unv' = [unv EXCEPT ![d] = NoVal]
-    /\ UNCHANGED <<lastSync, pair, blob, mEntry, mTomb, lock, pc, pullSnap, pushPlan,
+    /\ UNCHANGED <<lastSync, pair, blob, mEntry, mBuilt, mTomb, lock, pc, pullSnap, pushPlan,
                    repair, races, authored, deleted, lostByRule, rec>>
 
 -----------------------------------------------------------------------------
@@ -220,10 +232,11 @@ PullStart(d) ==
           /\ IF mEntry # NoVal /\ mTomb = NoVal
                THEN /\ pc' = [pc EXCEPT ![d] = "pullBlob"]
                     /\ pullSnap' = [pullSnap EXCEPT ![d] =
-                                      [entry |-> mEntry, ls |-> lastSync[d], tsnap |-> T0]]
+                                      [entry |-> mEntry, ls |-> lastSync[d], tsnap |-> T0,
+                                       built |-> mBuilt]]
                ELSE /\ pc' = [pc EXCEPT ![d] = "push"]
                     /\ UNCHANGED pullSnap
-    /\ UNCHANGED <<now, lastSync, pair, unv, blob, mEntry, mTomb, lock, pushPlan, repair,
+    /\ UNCHANGED <<now, lastSync, pair, unv, blob, mEntry, mBuilt, mTomb, lock, pushPlan, repair,
                    races, resolves, authored, discarded, deleted>>
 
 (* refreshRecord, before the blob read: this device's own upload, now in     *)
@@ -247,7 +260,7 @@ PullBlobLag(d) ==
     /\ pc[d] = "pullBlob"
     /\ pc' = [pc EXCEPT ![d] = "push"]
     /\ rec' = IF FixedRecords THEN [rec EXCEPT ![d] = Refreshed(d, pullSnap[d])] ELSE rec
-    /\ UNCHANGED <<now, local, tomb, lastSync, pair, unv, blob, mEntry, mTomb, lock,
+    /\ UNCHANGED <<now, local, tomb, lastSync, pair, unv, blob, mEntry, mBuilt, mTomb, lock,
                    pullSnap, pushPlan, repair, races, resolves, authored, discarded,
                    deleted, lostByRule>>
 
@@ -309,11 +322,17 @@ MergeRec(d, S, R) ==
     LET L  == local[d]
         r  == Refreshed(d, S)
         E  == S.entry
+        \* SyncEngine.uploadLeftOut: this device's copy is still its own latest upload,
+        \* and the folder's version names a different upload of this device, or none
+        \* (an entry without the field names nothing).
+        leftOut == /\ FixedBuiltOn
+                   /\ L # NoVal /\ L.m = r.published /\ E.m # L.m
+                   /\ (S.built = NoVal \/ S.built[d] # L.m)
         ownUploadReplaced == L # NoVal /\ L.m = r.uploaded
                              /\ ~(r.shown = E.m /\ r.shownLocal = L.m)
         lc == IF L = NoVal THEN FALSE
-              ELSE IF r.agreed # NoVal THEN L.m # r.agreed /\ ~ownUploadReplaced
-              ELSE IF r.uploaded # NoVal THEN L.m # r.uploaded
+              ELSE IF r.agreed # NoVal THEN (L.m # r.agreed /\ ~ownUploadReplaced) \/ leftOut
+              ELSE IF r.uploaded # NoVal THEN L.m # r.uploaded \/ leftOut
               ELSE L.m > S.ls \/ L.m > R.m
         rc == IF L # NoVal /\ r.agreed # NoVal THEN E.m # r.agreed ELSE TRUE
         unsettled == L # NoVal /\ R # L /\ r.shown = E.m /\ r.shownLocal = L.m
@@ -355,7 +374,7 @@ PullBlob(d) ==
          THEN Classify(d, S, blob)
        ELSE Merge(d, S, blob)
     /\ pc' = [pc EXCEPT ![d] = "push"]
-    /\ UNCHANGED <<now, lastSync, blob, mEntry, mTomb, lock, pullSnap, pushPlan, races,
+    /\ UNCHANGED <<now, lastSync, blob, mEntry, mBuilt, mTomb, lock, pullSnap, pushPlan, races,
                    resolves, authored, discarded, deleted, lostByRule>>
 
 -----------------------------------------------------------------------------
@@ -417,7 +436,15 @@ Plan(d) ==
         wm   == IF hold THEN IF L.m - 1 > ls THEN IF L.m - 1 < now THEN L.m - 1 ELSE now
                              ELSE ls
                 ELSE now
+        \* SyncEngine.upload: the entry it replaces names what it was built on, plus
+        \* this device's own upload. An entry left as it is keeps its field.
+        built == IF e4 = NoVal THEN NoVal
+                 ELSE IF op = "write" /\ FixedBuiltOn
+                   THEN [x \in Dev |-> IF x = d THEN L.m
+                                       ELSE IF mBuilt = NoVal THEN NoVal ELSE mBuilt[x]]
+                 ELSE mBuilt
     IN [op |-> op, ver |-> L, entry |-> e4, tomb |-> t3, wm |-> wm, stale |-> stale,
+        built |-> built,
         \* the folder's version this push's deletion record removes (step 3)
         removed |-> IF del3 THEN e1 ELSE NoVal,
         \* step 6: superseded-by-edit purge, and an overtaken deletion
@@ -438,7 +465,7 @@ PushStart(d) ==
                  ELSE pair
     /\ repair' = [repair EXCEPT ![d] = FALSE]
     /\ pc' = [pc EXCEPT ![d] = "pushBlob"]
-    /\ UNCHANGED <<now, local, tomb, lastSync, unv, blob, mEntry, mTomb, pullSnap,
+    /\ UNCHANGED <<now, local, tomb, lastSync, unv, blob, mEntry, mBuilt, mTomb, pullSnap,
                    resolves, authored, discarded, deleted, lostByRule, rec>>
 
 PushDeferred(d) ==
@@ -446,7 +473,7 @@ PushDeferred(d) ==
     /\ lock # NoVal /\ lock # d
     /\ pc' = [pc EXCEPT ![d] = "idle"]
     /\ repair' = [repair EXCEPT ![d] = FALSE]
-    /\ UNCHANGED <<now, local, tomb, lastSync, pair, unv, blob, mEntry, mTomb, lock,
+    /\ UNCHANGED <<now, local, tomb, lastSync, pair, unv, blob, mEntry, mBuilt, mTomb, lock,
                    pullSnap, pushPlan, races, resolves, authored, discarded, deleted,
                    lostByRule, rec>>
 
@@ -458,7 +485,7 @@ PushBlob(d) ==
                  [] P.op = "delete" -> IF FixedRecords THEN blob ELSE NoVal
                  [] OTHER           -> blob
     /\ pc' = [pc EXCEPT ![d] = "pushManifest"]
-    /\ UNCHANGED <<now, local, tomb, lastSync, pair, unv, mEntry, mTomb, lock, pullSnap,
+    /\ UNCHANGED <<now, local, tomb, lastSync, pair, unv, mEntry, mBuilt, mTomb, lock, pullSnap,
                    pushPlan, repair, races, resolves, authored, discarded, deleted,
                    lostByRule, rec>>
 
@@ -468,6 +495,7 @@ PushManifest(d) ==
     /\ pc[d] = "pushManifest"
     /\ LET P == pushPlan[d] IN
        /\ mEntry' = P.entry
+       /\ mBuilt' = P.built
        /\ mTomb' = P.tomb
        /\ tomb' = [tomb EXCEPT ![d] = IF P.purge THEN NoVal ELSE tomb[d]]
        /\ lastSync' = [lastSync EXCEPT ![d] = P.wm]
@@ -477,7 +505,9 @@ PushManifest(d) ==
                           THEN lostByRule \cup {P.removed.c} ELSE lostByRule
        \* This device's upload, now listed: agreed once a pull sees it there.
        /\ rec' = IF FixedRecords /\ P.op = "write"
-                   THEN [rec EXCEPT ![d].uploaded = P.ver.m] ELSE rec
+                   THEN [rec EXCEPT ![d].uploaded = P.ver.m,
+                                    ![d].published = IF FixedBuiltOn THEN P.ver.m ELSE NoVal]
+                   ELSE rec
        \* With records: the deleted Take's file, removed after the manifest write,
        \* which is no longer cancellable.
        /\ blob' = IF FixedRecords /\ P.op = "delete" THEN NoVal ELSE blob
@@ -491,7 +521,7 @@ PushCancel(d) ==
     /\ pc[d] \in {"pushBlob", "pushManifest"}
     /\ lock' = ReleaseLock(d)
     /\ pc' = [pc EXCEPT ![d] = "idle"]
-    /\ UNCHANGED <<now, local, tomb, lastSync, pair, unv, blob, mEntry, mTomb, pullSnap,
+    /\ UNCHANGED <<now, local, tomb, lastSync, pair, unv, blob, mEntry, mBuilt, mTomb, pullSnap,
                    pushPlan, repair, races, resolves, authored, discarded, deleted,
                    lostByRule, rec>>
 

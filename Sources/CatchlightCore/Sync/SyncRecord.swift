@@ -33,12 +33,18 @@ public struct SyncRecord: Codable, Equatable, Sendable {
     /// `shown` becomes `agreed`.
     public var shown: String?
     public var shownLocal: String?
+    /// This device's latest upload, kept after it is agreed (2.1.0). While this device's copy is
+    /// still that upload, a folder version whose `builtOn` names a different upload of this
+    /// device was written by a push that never had it (two pushes past the lock at once).
+    /// Nil in a record from 2.0.0: nothing is checked until this device next uploads.
+    public var published: String?
 
     public init(agreed: String? = nil, uploaded: String? = nil,
-                shown: String? = nil, shownLocal: String? = nil) {
+                shown: String? = nil, shownLocal: String? = nil, published: String? = nil) {
         self.agreed = agreed
         self.uploaded = uploaded
         self.shown = shown
         self.shownLocal = shownLocal
+        self.published = published
     }
 }
