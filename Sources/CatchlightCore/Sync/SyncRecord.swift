@@ -38,13 +38,20 @@ public struct SyncRecord: Codable, Equatable, Sendable {
     /// device was written by a push that never had it (two pushes past the lock at once).
     /// Nil in a record from 2.0.0: nothing is checked until this device next uploads.
     public var published: String?
+    /// True when `shown` was shown as a copy that couldn't be verified (its file didn't match
+    /// the manifest), so this device never read that version's own content (2.2.0). Settling it
+    /// then never makes it `agreed`: push won't write over a version nobody here has read. It
+    /// waits until a pull can read it, from the device that holds it repairing the file.
+    public var shownUnverified: Bool?
 
     public init(agreed: String? = nil, uploaded: String? = nil,
-                shown: String? = nil, shownLocal: String? = nil, published: String? = nil) {
+                shown: String? = nil, shownLocal: String? = nil, published: String? = nil,
+                shownUnverified: Bool? = nil) {
         self.agreed = agreed
         self.uploaded = uploaded
         self.shown = shown
         self.shownLocal = shownLocal
         self.published = published
+        self.shownUnverified = shownUnverified
     }
 }

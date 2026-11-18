@@ -50,8 +50,13 @@ CONSTANTS
     FixedRecords,   \* TRUE: model the per-Take sync record (SyncRecord.swift): each device
                     \* compares with the version it last agreed with, not edit times with
                     \* its last-sync time, and push never uploads over a version it has not had
-    FixedBuiltOn    \* TRUE (with FixedRecords): each upload records in the manifest entry which
+    FixedBuiltOn,   \* TRUE (with FixedRecords): each upload records in the manifest entry which
                     \* upload of each device it was built on (ManifestEntry.builtOn)
+    FixedKeepDeletion, \* TRUE: a device keeps its own deletion after seeing it in the folder
+                    \* (until tombstone retention, not modelled), instead of dropping it at once
+    FixedPendingFile   \* TRUE: a file that decrypts and is newer than the entry naming it is an
+                    \* upload whose manifest write is pending: skipped, never repaired over; and a
+                    \* version shown only as couldn't-verify never becomes agreed by settling
 
 VARIABLES
     now,        \* global clock; ticks only on user actions
@@ -86,7 +91,7 @@ Ver(c, m) == [c |-> c, m |-> m]
 V0 == Ver(0, 0)
 Held(d) == pair[d] # NoVal
 NoRec == [agreed |-> NoVal, uploaded |-> NoVal, shown |-> NoVal, shownLocal |-> NoVal,
-          published |-> NoVal]
+          published |-> NoVal, shownUnverified |-> FALSE]
 
 -----------------------------------------------------------------------------
 Init ==
@@ -222,7 +227,8 @@ PullStart(d) ==
           \* step 2b purges a pending one the manifest confirms.
           /\ tomb' = [tomb EXCEPT ![d] =
                         IF doDel THEN NoVal
-                        ELSE IF T0 # NoVal /\ mTomb # NoVal /\ mTomb >= T0 THEN NoVal
+                        ELSE IF T0 # NoVal /\ mTomb # NoVal /\ mTomb >= T0 /\ ~FixedKeepDeletion
+                          THEN NoVal
                         ELSE T0]
           /\ lostByRule' = IF doDel THEN lostByRule \cup {L.c} ELSE lostByRule
           \* The record goes with a pulled deletion, and once this device's own deletion
@@ -248,10 +254,14 @@ Refreshed(d, S) ==
         r1 == IF r.uploaded = S.entry.m
                 THEN [r EXCEPT !.agreed = S.entry.m, !.uploaded = NoVal] ELSE r
     IN IF r1.shown = S.entry.m /\ ~Held(d) /\ (L = NoVal \/ L.m # r1.shownLocal)
+          /\ ~(FixedPendingFile /\ r1.shownUnverified)
          THEN [r1 EXCEPT !.agreed = S.entry.m, !.shown = NoVal, !.shownLocal = NoVal]
          ELSE r1
 
-Shown(r, E, L) == [r EXCEPT !.shown = E.m, !.shownLocal = IF L = NoVal THEN NoVal ELSE L.m]
+Shown(r, E, L) == [r EXCEPT !.shown = E.m, !.shownLocal = IF L = NoVal THEN NoVal ELSE L.m,
+                             !.shownUnverified = FALSE]
+\* Shown as couldn't-verify: this device never read the version's own content.
+ShownUnv(r, E, L) == [Shown(r, E, L) EXCEPT !.shownUnverified = TRUE]
 Agreed(r, E) == [r EXCEPT !.agreed = E.m, !.uploaded = NoVal]
 
 (* The blob is declared but not readable yet: report.skipped.                *)
@@ -272,7 +282,9 @@ Classify(d, S, B) ==
         \* device has had (agreed, or its own upload); otherwise the user is shown it.
         newerOk == ~FixedRecords \/ S.entry.m \in ({r.agreed, r.uploaded} \ {NoVal})
     IN
-    /\ IF L = NoVal /\ S.tsnap # NoVal
+    /\ IF FixedPendingFile /\ B.m > S.entry.m
+         THEN /\ UNCHANGED <<unv, repair>> /\ rec' = [rec EXCEPT ![d] = r]
+       ELSE IF L = NoVal /\ S.tsnap # NoVal
          THEN /\ UNCHANGED <<unv, repair>> /\ rec' = [rec EXCEPT ![d] = r]
        ELSE IF L # NoVal
          THEN IF L.m = S.entry.m
@@ -282,10 +294,10 @@ Classify(d, S, B) ==
                 THEN /\ UNCHANGED <<unv, repair>> /\ rec' = [rec EXCEPT ![d] = r]
               ELSE /\ unv' = [unv EXCEPT ![d] = [l |-> L, r |-> B]]
                    /\ UNCHANGED repair
-                   /\ rec' = [rec EXCEPT ![d] = IF FixedRecords THEN Shown(r, S.entry, L) ELSE r]
+                   /\ rec' = [rec EXCEPT ![d] = IF FixedRecords THEN ShownUnv(r, S.entry, L) ELSE r]
          ELSE /\ unv' = [unv EXCEPT ![d] = [l |-> NoVal, r |-> B]]
               /\ UNCHANGED repair
-              /\ rec' = [rec EXCEPT ![d] = IF FixedRecords THEN Shown(r, S.entry, NoVal) ELSE r]
+              /\ rec' = [rec EXCEPT ![d] = IF FixedRecords THEN ShownUnv(r, S.entry, NoVal) ELSE r]
     /\ UNCHANGED <<local, tomb, pair>>
 
 (* The verified path: held check, resurrection guard, ConflictResolver.      *)
