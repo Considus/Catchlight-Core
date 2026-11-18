@@ -266,7 +266,7 @@ final class SyncRecordRulesTests: XCTestCase {
         try syncA(10)                                      // the deletion goes out
         try syncA(20)                                      // and is seen in a pull
 
-        XCTAssertTrue(try storeA.tombstones().isEmpty)
+        XCTAssertEqual(try storeA.tombstones().map(\.id), [id], "the deletion itself is kept until retention")
         XCTAssertNil(try storeA.syncRecord(id: id))
     }
 }

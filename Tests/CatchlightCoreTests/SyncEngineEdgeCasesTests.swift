@@ -112,11 +112,15 @@ final class SyncEngineEdgeCasesTests: XCTestCase {
         XCTAssertEqual(try store.tombstones().map(\.id), [take.id],
                        "local tombstone is retained until observed in a pulled manifest")
 
-        // Pull our own manifest back: the tombstone is now durably observed →
-        // purged locally.
+        // Pull our own manifest back: observed, and still KEPT (2.2.0), so a racing push that
+        // writes an older edit back can't bring the Take back here
+        // (SyncRaceFileAndDeletionTests). Purged once past retention.
         try makeEngine(store: store, cloud: cloud, keys: k, now: Date.init).pullInbound()
-        XCTAssertTrue(try store.tombstones().isEmpty,
-                      "local tombstone is purged once observed in a pulled manifest")
+        XCTAssertEqual(try store.tombstones().map(\.id), [take.id],
+                       "local tombstone is kept after it is observed in a pulled manifest")
+        let pastRetention = Date().addingTimeInterval(Manifest.tombstoneRetention + 3600)
+        try makeEngine(store: store, cloud: cloud, keys: k, now: { pastRetention }).pullInbound()
+        XCTAssertTrue(try store.tombstones().isEmpty, "local tombstone is purged past retention")
     }
 
     /// A local Take ABSENT from the remote manifest is NOT deleted on pull

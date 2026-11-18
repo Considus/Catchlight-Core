@@ -305,8 +305,15 @@ public final class SyncEngine {
                 overtakenDeletions.append(ts.id)
                 continue
             }
-            blobsToDelete.insert(ts.id)
             let incoming = ManifestTombstone(uuid: ts.id, deletedAt: ISO8601.string(from: ts.deletedAt))
+            let confirmedInFolder = mergedTombstones[ts.id].map {
+                (ISO8601.date(from: $0.deletedAt) ?? .distantPast) >= ts.deletedAt
+            } ?? false
+            // The file goes until the folder has this deletion. A deletion is now kept after the
+            // folder confirms it (2.2.0), and would otherwise ask the folder to delete a gone file
+            // on every push of its retention. An entry listed again by a racing push loses its
+            // file in step 3, with the entry.
+            if !confirmedInFolder { blobsToDelete.insert(ts.id) }
             if let existing = mergedTombstones[ts.id],
                (ISO8601.date(from: existing.deletedAt) ?? .distantPast) >= ts.deletedAt {
                 // keep the existing (newer) record
@@ -730,7 +737,16 @@ public final class SyncEngine {
                 guard let remote = remoteDeletedAt[local.id] else { return false }
                 return remote >= local.deletedAt
             }
-            try store.purgeTombstones(ids: confirmed.map(\.id))
+            // KEPT once confirmed, until retention (2.2.0). A push that passed the lock with this
+            // one can still write its older edit back over the deletion after this pull has seen
+            // it; kept, the deletion refuses that edit here (`applyRemote`, and the pull's own
+            // check) and the next push sends it again. Past retention every device has had time
+            // to see it, and push no longer sends it either (step 3). A deletion the folder never
+            // confirmed stays, as before: it alone keeps the pull from bringing the Take back.
+            let expired = confirmed.filter {
+                now().timeIntervalSince($0.deletedAt) > Manifest.tombstoneRetention
+            }
+            try store.purgeTombstones(ids: expired.map(\.id))
             // The deletion is in the folder now: a Take gone from this device needs no record.
             for id in confirmed.map(\.id) where try store.take(id: id) == nil {
                 try store.setSyncRecord(nil, id: id)
@@ -956,7 +972,9 @@ public final class SyncEngine {
             record.agreed = entry.modified
             record.uploaded = nil
         }
-        if record.shown == entry.modified, !held {
+        // A version shown only as a copy that couldn't be verified was never read here: it stays
+        // shown, and push keeps off it, until a pull can read it (2.2.0).
+        if record.shown == entry.modified, !held, record.shownUnverified != true {
             let stamp = try store.take(id: entry.uuid).map { ISO8601.string(from: $0.modifiedAt) }
             if stamp == nil || stamp != record.shownLocal {
                 record.agreed = entry.modified
@@ -977,10 +995,12 @@ public final class SyncEngine {
     }
 
     /// The entry's version has been shown to the user against this device's copy.
-    private func markShown(_ entry: ManifestEntry, against local: Take?, _ record: SyncRecord?) throws {
+    private func markShown(_ entry: ManifestEntry, against local: Take?, _ record: SyncRecord?,
+                           unverified: Bool = false) throws {
         var r = record ?? SyncRecord()
         r.shown = entry.modified
         r.shownLocal = local.map { ISO8601.string(from: $0.modifiedAt) }
+        r.shownUnverified = unverified ? true : nil
         if r != record { try store.setSyncRecord(r, id: entry.uuid) }
     }
 
@@ -1030,11 +1050,19 @@ public final class SyncEngine {
                Self.versionsHad(record).contains(entry.modified) {
                 return
             }
+            // Already shown as couldn't-verify and acted on since (a choice, or an edit): not asked
+            // again for the same version. Push still keeps off it, until a pull can read it or a
+            // newer version arrives, which is shown as any conflict is (2.2.0).
+            if record?.shownUnverified == true, record?.shown == entry.modified,
+               ISO8601.string(from: local.modifiedAt) != record?.shownLocal {
+                report.skipped.append(entry.uuid)
+                return
+            }
             report.unverified.append(UnverifiedCopy(id: entry.uuid, local: local, cloud: cloudTake))
-            try markShown(entry, against: local, record)
+            try markShown(entry, against: local, record, unverified: true)
         } else if let cloudTake {
             report.unverified.append(UnverifiedCopy(id: entry.uuid, local: nil, cloud: cloudTake))
-            try markShown(entry, against: nil, record)
+            try markShown(entry, against: nil, record, unverified: true)
         } else {
             report.quarantined.append(entry.uuid)
         }
