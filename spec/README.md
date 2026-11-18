@@ -13,7 +13,7 @@ java -cp tla2tools.jar tlc2.TLC -workers auto -config CatchlightSync.cfg Catchli
 | `CatchlightSyncStrict.cfg` | Control: no exemption for the designed edit-versus-delete rule, so it must fail. A pass means the model cannot see a loss. | Fails, as it must |
 | `CatchlightSync.cfg` | No edit lost unless a user gave it up or a newer deletion removed it; sync never brings back a deleted version. | Fails: known sync bugs |
 | `CatchlightSyncLive.cfg` | Once users stop, every device and the folder agree. | Fails: known sync bugs |
-| `CatchlightSyncRecords.cfg` | As `CatchlightSync.cfg`, with the per-Take sync record (`FixedRecords`), the manifest entry's `builtOn` (`FixedBuiltOn`), kept deletions (`FixedKeepDeletion`), the pending-file rules (`FixedPendingFile`) and no lock race. | Passes |
+| `CatchlightSyncRecords.cfg` | As `CatchlightSync.cfg`, with the per-Take sync record (`FixedRecords`), the manifest entry's `builtOn` (`FixedBuiltOn`), kept deletions (`FixedKeepDeletion`), unread versions never treated as had (`FixedUnreadVersion`) and no lock race. | Passes |
 | `CatchlightSyncRecordsUpgrade.cfg` | The same, starting with no records: the first syncs after updating. | Passes |
 | `CatchlightSyncRecordsLive.cfg` | Convergence with the record. | Passes |
 | `CatchlightSyncRecordsStrict.cfg` | Control with the record: must fail. | Fails, as it must |

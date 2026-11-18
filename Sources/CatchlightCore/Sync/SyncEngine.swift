@@ -1037,16 +1037,6 @@ public final class SyncEngine {
             cloudTake = nil
         }
 
-        // A file that decrypts and is NEWER than the entry naming it is another device's upload
-        // whose manifest write hasn't landed yet (or was cancelled and will be redone): two pushes
-        // past the lock at once (2.2.0). Repairing it would write the older version over the
-        // only copy of the newer one. Leave it, as for a file not readable yet.
-        if let cloudTake, let entryModified = ISO8601.date(from: entry.modified),
-           cloudTake.modifiedAt > entryModified {
-            report.skipped.append(entry.uuid)
-            return
-        }
-
         if let local {
             if ISO8601.string(from: local.modifiedAt) == entry.modified {
                 report.repairCandidates.append(entry.uuid)
@@ -1057,6 +1047,14 @@ public final class SyncEngine {
             // (`leaveForNextPull`), so the user decides.
             if let entryModified = ISO8601.date(from: entry.modified), local.modifiedAt > entryModified,
                Self.versionsHad(record).contains(entry.modified) {
+                return
+            }
+            // Already shown as couldn't-verify and acted on since (a choice, or an edit): not asked
+            // again for the same version. Push still keeps off it, until a pull can read it or a
+            // newer version arrives, which is shown as any conflict is (2.2.0).
+            if record?.shownUnverified == true, record?.shown == entry.modified,
+               ISO8601.string(from: local.modifiedAt) != record?.shownLocal {
+                report.skipped.append(entry.uuid)
                 return
             }
             report.unverified.append(UnverifiedCopy(id: entry.uuid, local: local, cloud: cloudTake))

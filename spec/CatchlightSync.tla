@@ -54,9 +54,9 @@ CONSTANTS
                     \* upload of each device it was built on (ManifestEntry.builtOn)
     FixedKeepDeletion, \* TRUE: a device keeps its own deletion after seeing it in the folder
                     \* (until tombstone retention, not modelled), instead of dropping it at once
-    FixedPendingFile   \* TRUE: a file that decrypts and is newer than the entry naming it is an
-                    \* upload whose manifest write is pending: skipped, never repaired over; and a
-                    \* version shown only as couldn't-verify never becomes agreed by settling
+    FixedUnreadVersion \* TRUE: a version shown only as couldn't-verify (its file holds another
+                    \* version) never becomes agreed by settling, so push never writes over it;
+                    \* once acted on, the same version is not shown again
 
 VARIABLES
     now,        \* global clock; ticks only on user actions
@@ -254,7 +254,7 @@ Refreshed(d, S) ==
         r1 == IF r.uploaded = S.entry.m
                 THEN [r EXCEPT !.agreed = S.entry.m, !.uploaded = NoVal] ELSE r
     IN IF r1.shown = S.entry.m /\ ~Held(d) /\ (L = NoVal \/ L.m # r1.shownLocal)
-          /\ ~(FixedPendingFile /\ r1.shownUnverified)
+          /\ ~(FixedUnreadVersion /\ r1.shownUnverified)
          THEN [r1 EXCEPT !.agreed = S.entry.m, !.shown = NoVal, !.shownLocal = NoVal]
          ELSE r1
 
@@ -282,15 +282,17 @@ Classify(d, S, B) ==
         \* device has had (agreed, or its own upload); otherwise the user is shown it.
         newerOk == ~FixedRecords \/ S.entry.m \in ({r.agreed, r.uploaded} \ {NoVal})
     IN
-    /\ IF FixedPendingFile /\ B.m > S.entry.m
-         THEN /\ UNCHANGED <<unv, repair>> /\ rec' = [rec EXCEPT ![d] = r]
-       ELSE IF L = NoVal /\ S.tsnap # NoVal
+    /\ IF L = NoVal /\ S.tsnap # NoVal
          THEN /\ UNCHANGED <<unv, repair>> /\ rec' = [rec EXCEPT ![d] = r]
        ELSE IF L # NoVal
          THEN IF L.m = S.entry.m
                 THEN /\ repair' = [repair EXCEPT ![d] = TRUE]
                      /\ UNCHANGED <<unv>> /\ rec' = [rec EXCEPT ![d] = r]
               ELSE IF L.m > S.entry.m /\ newerOk
+                THEN /\ UNCHANGED <<unv, repair>> /\ rec' = [rec EXCEPT ![d] = r]
+              \* Already shown as couldn't-verify and acted on since: not asked again.
+              ELSE IF FixedUnreadVersion /\ r.shownUnverified /\ r.shown = S.entry.m
+                      /\ L.m # r.shownLocal
                 THEN /\ UNCHANGED <<unv, repair>> /\ rec' = [rec EXCEPT ![d] = r]
               ELSE /\ unv' = [unv EXCEPT ![d] = [l |-> L, r |-> B]]
                    /\ UNCHANGED repair

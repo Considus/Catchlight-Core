@@ -91,27 +91,32 @@ final class SyncRaceFileAndDeletionTests: XCTestCase {
     // MARK: - The Take's file and its entry written by different pushes
 
     /// A's push writes its file, then B's whole sync runs before A writes the manifest: B finds a
-    /// file newer than the entry and "repairs" it with the older version. A's entry then names a
-    /// file holding B's copy, so A's edit is gone from the folder, and B can't read it. A pending
-    /// upload's file must be left alone.
-    func testNewerFileWhoseManifestWriteIsPending_isNotRepairedOver() throws {
+    /// file newer than the entry and repairs it with the version the entry names. A's entry then
+    /// names a file holding B's copy. B can't read A's version and shows it as couldn't-verify;
+    /// the user edits on. B must not count A's version as had and write over it: A repairs its
+    /// file on its next sync, and B then shows the conflict.
+    func testVersionWhoseFileWasRepairedOver_isNeverWrittenOver() throws {
         let take = try syncedTake()
         try edit(storeA, take.id, "edit on A", at: 10)
-
         let blindB = LockBlindFolder(cloud)
-        var repairedOver = false
-        let viewA = BeforeManifestWriteFolder(cloud) {
-            let report = try self.engine(self.storeB, blindB, self.deviceB, 12).sync()
-            repairedOver = report.repaired.contains(take.id) || report.uploaded.contains(take.id)
-        }
+        let viewA = BeforeManifestWriteFolder(cloud) { try self.engine(self.storeB, blindB, self.deviceB, 12).sync() }
         try engine(storeA, viewA, deviceA, 11).sync()
         XCTAssertTrue(viewA.fired)
-        XCTAssertFalse(repairedOver, "B re-uploaded the older version over A's pending file")
-        XCTAssertEqual(try cloudText(take.id), "edit on A")
 
-        let pulled = try engine(storeB, cloud, deviceB, 20).sync()
-        XCTAssertEqual(pulled.unverified.count, 0)
-        XCTAssertEqual(try storeB.take(id: take.id)?.primaryText, "edit on A", "B never received A's edit")
+        let shown = try engine(storeB, cloud, deviceB, 20).sync()
+        XCTAssertEqual(shown.unverified.map(\.id), [take.id], "the race did not leave the file and entry apart")
+        try edit(storeB, take.id, "edit on B", at: 25)
+        let next = try engine(storeB, cloud, deviceB, 26).sync()
+        XCTAssertEqual(next.unverified.count, 0, "asked again about a version the user already acted on")
+        var conflictsSeen = next.conflicts.count
+        XCTAssertNotEqual(try cloudText(take.id), "edit on B", "B wrote over a version it never read")
+
+        try engine(storeA, cloud, deviceA, 30).sync()                                   // repairs its file
+        conflictsSeen += try engine(storeB, cloud, deviceB, 31).sync().conflicts.count
+        let texts = [try storeA.take(id: take.id)?.primaryText, try storeB.take(id: take.id)?.primaryText,
+                     try cloudText(take.id)]
+        XCTAssertTrue(texts.contains("edit on A"), "A's edit is gone: \(texts)")
+        XCTAssertGreaterThan(conflictsSeen, 0, "B's edit and A's version were never shown together")
     }
 
     /// The other order: B's push writes its file, A's whole sync writes A's file and entry, then
@@ -136,7 +141,9 @@ final class SyncRaceFileAndDeletionTests: XCTestCase {
         let shown = try engine(storeA, cloud, deviceA, 30).sync()
         XCTAssertEqual(shown.unverified.map(\.id), [take.id], "A should be unable to read B's version")
         try edit(storeA, take.id, "edit on A, carried on", at: 31)
-        var conflictsSeen = try engine(storeA, cloud, deviceA, 32).sync().conflicts.count
+        let next = try engine(storeA, cloud, deviceA, 32).sync()
+        XCTAssertEqual(next.unverified.count, 0, "asked again about a version the user already acted on")
+        var conflictsSeen = next.conflicts.count
         XCTAssertNotEqual(try cloudText(take.id), "edit on A, carried on", "A wrote over a version it never read")
 
         conflictsSeen += try engine(storeB, cloud, deviceB, 40).sync().conflicts.count   // repairs its file
