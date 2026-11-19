@@ -12,7 +12,7 @@ The encryption, in `Crypto/`, all through Apple CryptoKit. Your Privacy phrase i
 
 The Take itself, in `Model/`: its lines and checklist items, time and place reminders, the Obie, manual ordering, and the 5 Takes a new account starts with.
 
-Sync, in `Sync/`. It reads and writes encrypted files in a folder you choose, then keeps a manifest of what's there, with tombstones so a deletion travels as well as an edit. It also settles conflicts, and holds a lock so two devices never write at once.
+Sync, in `Sync/`. It reads and writes encrypted files in a folder you choose, then keeps a manifest of what's there, with tombstones so a deletion travels as well as an edit. It also brings conflicts to you to decide, and holds a lock so two devices don't normally write at once. Two syncs can occasionally get past it together. Since 2.2, when they do, a note whose latest upload was written over by a device that hadn't seen it comes back as a conflict to choose between, a deletion that has reached the sync folder can't be undone by a sync that slipped past the lock, and a version a device can't verify is never written over.
 
 Then the smaller pieces: Markdown export and import, link detection, the JSON codec every client shares, and a diagnostics log that never records what you wrote.
 
