@@ -43,7 +43,7 @@ swift test --scratch-path "$BUILD_DIR/spm"
 Add it as a Swift package and pin an exact version:
 
 ```swift
-.package(url: "https://github.com/Considus/Catchlight-Core", exact: "1.0.1")
+.package(url: "https://github.com/Considus/Catchlight-Core", exact: "2.2.0")
 ```
 
 A new version can change what gets written to disk, so an app should take one on purpose, with its own tests run against it, and never pick one up by accident.
